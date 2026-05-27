@@ -1,0 +1,21 @@
+[package]
+name = "nvmd"
+version = "0.1.0"
+edition = "2021"
+description = "Lightweight native Markdown preview for Neovim."
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+directories = "5"
+eframe = "0.31"
+notify = "6"
+pulldown-cmark = "0.10"
+serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"
+toml = "0.8"
+mermaid-rs-renderer = { version = "0.1.2", default-features = false }
+resvg = "0.42"
+usvg = "0.42"
+tiny-skia = "0.11"

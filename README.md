@@ -1,0 +1,134 @@
+# nvmd
+
+Lightweight native Markdown preview for Neovim.
+
+`nvmd` is a small native preview window for Markdown files. Neovim remains the editor; `nvmd` opens beside it, renders the current file, watches for saves, and reloads the preview.
+
+## Why
+
+Most Markdown preview flows either open a browser tab or embed browser technology. `nvmd` is intentionally native: Rust, `egui`, `pulldown-cmark`, `notify`, and native Mermaid rendering.
+
+## Run
+
+```sh
+cargo run -- README.md
+```
+
+The preview launches as a detached process, so the terminal prompt returns immediately.
+
+Help:
+
+```sh
+cargo run -- --help
+```
+
+## Neovim Plugin
+
+The plugin automatically uses the release binary built inside its installed
+directory, falling back to `nvmd` on `PATH`. With `packer.nvim`:
+
+```lua
+use {
+  "ryuux05/nvmd",
+  run = "cargo build --release",
+  config = function()
+    require("nvmd").setup({
+      live_reload = true,
+      debounce_ms = 150,
+    })
+  end,
+}
+```
+
+Run `:PackerSync`, open a Markdown file, and use `:NvmdOpen`.
+
+With `lazy.nvim`:
+
+```lua
+{
+  "ryuux05/nvmd",
+  build = "cargo build --release",
+  config = function()
+    require("nvmd").setup({
+      live_reload = true,
+      debounce_ms = 150,
+    })
+  end,
+}
+```
+
+Set `binary = "/custom/path/to/nvmd"` only when overriding the automatically
+detected release binary or using a separately installed executable.
+
+Available commands:
+
+- `:NvmdOpen` opens a viewer for the current Markdown buffer.
+- `:NvmdClose` closes that buffer's viewer.
+- `:NvmdToggle` toggles that buffer's viewer.
+- `:NvmdRefresh` republishes the cursor position or opens the viewer if needed.
+
+While a viewer is open, moving the Neovim cursor scrolls the preview to the
+corresponding rendered block. Entering a Mermaid fenced block also focuses that
+diagram for keyboard controls in the viewer.
+
+By default, the plugin previews unsaved buffer edits after a short `150ms`
+pause in typing. Set `live_reload = false` to preview only saved file changes;
+cursor-follow synchronization continues in either mode.
+
+## Current Markdown Support
+
+- Headings
+- Paragraphs
+- Fenced code blocks
+- Bullet lists
+- Ordered lists
+- Blockquotes
+- Horizontal rules
+- Mermaid fenced code blocks
+
+Unsupported Markdown is ignored or shown as readable fallback content rather than crashing.
+
+## Mermaid Support
+
+Mermaid blocks are detected from fenced code blocks:
+
+````markdown
+```mermaid
+flowchart LR
+  A[Neovim] --> B[nvmd]
+```
+````
+
+Rendered example:
+
+```mermaid
+flowchart LR
+  A[Neovim] --> B[nvmd]
+  B --> C[egui window]
+  B --> D[Mermaid cache]
+```
+
+Rendering uses `mermaid-rs-renderer` natively and stores cached SVG files in the platform cache directory through `directories`. The SVG is rasterized with `resvg`/`usvg`/`tiny-skia` for display in `egui`.
+
+Mermaid compatibility is intentionally lightweight in V1. Unsupported diagram types or renderer failures are shown inline as an error with the original source block.
+
+## Viewer Commands
+
+Press `:` in the preview to open the command palette. Available commands include `:help`, `:settings`, `:reload`, `:top`, `:bottom`, `:mnext`, `:mprev`, `:mopen`, `:fit`, `:zoom-in`, `:zoom-out`, and `:q`.
+
+When a Mermaid diagram is selected, press `Enter` to open it in a large resizable view; press `Enter` again to enlarge it step by step until it fills the available window. Use `h/j/k/l` to pan around its whiteboard canvas, `[` / `]` to change zoom, and `f` to center and fit the complete diagram in the view. Use `Space j` and `Space k` to select or switch diagrams, including while the large view is open; press `Esc` to close it.
+
+## Roadmap
+
+- Bidirectional source navigation from the preview
+- Syntax highlighting
+- Image rendering
+- Table support
+- Themes
+- Config file
+- Better Mermaid compatibility
+- Async Mermaid render queue
+
+## Non-goals
+
+`nvmd` does not use Electron, Chromium, WebView, browser windows, Node.js, npm, Puppeteer, Mermaid CLI, or `mmdc`.
