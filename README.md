@@ -40,7 +40,9 @@ use {
 }
 ```
 
-Run `:PackerSync`, open a Markdown file, and use `:NvmdOpen`.
+Run `:PackerSync`, open a Markdown file, and use `:NvmdOpen`. You can also
+place the cursor over a Markdown filename in a file picker or file explorer and
+run `:NvmdOpen` without opening that file first.
 
 With `lazy.nvim`:
 
@@ -62,10 +64,16 @@ detected release binary or using a separately installed executable.
 
 Available commands:
 
-- `:NvmdOpen` opens a viewer for the current Markdown buffer.
-- `:NvmdClose` closes that buffer's viewer.
-- `:NvmdToggle` toggles that buffer's viewer.
+- `:NvmdOpen` opens a viewer for the current Markdown buffer, an optional file
+  argument, or the Markdown filename under the cursor.
+- `:NvmdClose` closes that file's viewer.
+- `:NvmdToggle` toggles that file's viewer.
 - `:NvmdRefresh` republishes the cursor position or opens the viewer if needed.
+- `:NvmdBuild` runs `cargo build --release` inside the installed plugin
+  directory when the binary was not built by the plugin manager.
+
+If `:NvmdOpen` reports that `nvmd` is not executable, install Rust/Cargo and
+run `:NvmdBuild`, `:PackerSync`, or your plugin manager's rebuild command.
 
 While a viewer is open, moving the Neovim cursor scrolls the preview to the
 corresponding rendered block. Entering a Mermaid fenced block also focuses that
