@@ -29,7 +29,20 @@ tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
 mkdir -p "$root/bin"
-curl -fL "$url" -o "$tmpdir/$asset"
+if ! curl -fL "$url" -o "$tmpdir/$asset"; then
+  echo "failed to download $url" >&2
+  if command -v cargo >/dev/null 2>&1; then
+    echo "falling back to cargo build --release" >&2
+    (cd "$root" && cargo build --release)
+    cp "$root/target/release/nvmd" "$root/bin/nvmd"
+    chmod +x "$root/bin/nvmd"
+    echo "built nvmd from source into $root/bin"
+    exit 0
+  fi
+  echo "no prebuilt binary is available for ${asset}, and cargo is not installed." >&2
+  echo "maintainers must publish a GitHub Release first, or users must install Rust/Cargo." >&2
+  exit 1
+fi
 tar -xzf "$tmpdir/$asset" -C "$root/bin"
 chmod +x "$root/bin/nvmd" "$root/bin/nvmd.exe" 2>/dev/null || true
 

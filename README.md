@@ -104,6 +104,10 @@ Prebuilt install requires a GitHub Release with binary assets. Maintainers can
 create one by pushing a version tag such as `v0.1.0`; the release workflow will
 build and upload the platform binaries.
 
+Until the first release exists, `scripts/install-binary.sh` falls back to
+`cargo build --release` when Rust/Cargo is available. Users without Rust need a
+published release asset.
+
 While a viewer is open, moving the Neovim cursor scrolls the preview to the
 corresponding rendered block. Entering a Mermaid fenced block also focuses that
 diagram for keyboard controls in the viewer.
