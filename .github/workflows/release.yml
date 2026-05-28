@@ -19,7 +19,7 @@ jobs:
           - os: ubuntu-latest
             asset: nvmd-linux-x86_64
             binary: nvmd
-          - os: macos-13
+          - os: macos-15-intel
             asset: nvmd-macos-x86_64
             binary: nvmd
           - os: macos-14
