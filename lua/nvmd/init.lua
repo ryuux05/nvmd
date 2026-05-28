@@ -4,6 +4,8 @@ local uv = vim.uv or vim.loop
 local defaults = {
   live_reload = true,
   debounce_ms = 150,
+  repo = "ryuux05/nvmd",
+  release = "latest",
 }
 
 local config = vim.deepcopy(defaults)
@@ -27,6 +29,10 @@ local function built_binary()
   return plugin_root() .. "/target/release/" .. binary_name()
 end
 
+local function downloaded_binary()
+  return plugin_root() .. "/bin/" .. binary_name()
+end
+
 local function executable(path)
   return path and path ~= "" and vim.fn.executable(path) == 1
 end
@@ -39,7 +45,12 @@ local function resolve_binary()
     return nil, "configured binary is not executable: " .. config.binary
   end
 
-  local candidate = built_binary()
+  local candidate = downloaded_binary()
+  if executable(candidate) then
+    return candidate
+  end
+
+  candidate = built_binary()
   if executable(candidate) then
     return candidate
   end
@@ -49,7 +60,7 @@ local function resolve_binary()
     return from_path
   end
 
-  return nil, "binary not found. Run :NvmdBuild or reinstall with your plugin manager build hook"
+  return nil, "binary not found. Run :NvmdInstallBinary, :NvmdBuild, or reinstall with your plugin manager build hook"
 end
 
 local function markdown_path(bufnr)
@@ -176,6 +187,90 @@ end
 
 local function session_running(session)
   return session and vim.fn.jobwait({ session.job_id }, 0)[1] == -1
+end
+
+local function platform_asset()
+  local os_name = vim.loop.os_uname().sysname
+  local machine = vim.loop.os_uname().machine:lower()
+  local os
+  if os_name == "Darwin" then
+    os = "macos"
+  elseif os_name == "Linux" then
+    os = "linux"
+  elseif os_name == "Windows_NT" then
+    os = "windows"
+  else
+    return nil, "unsupported OS: " .. os_name
+  end
+
+  local arch
+  if machine == "x86_64" or machine == "amd64" then
+    arch = "x86_64"
+  elseif machine == "arm64" or machine == "aarch64" then
+    arch = "aarch64"
+  else
+    return nil, "unsupported CPU architecture: " .. machine
+  end
+
+  return "nvmd-" .. os .. "-" .. arch .. ".tar.gz"
+end
+
+local function release_url(asset)
+  local base = "https://github.com/" .. config.repo .. "/releases"
+  if config.release == "latest" then
+    return base .. "/latest/download/" .. asset
+  end
+  return base .. "/download/" .. config.release .. "/" .. asset
+end
+
+function M.install_binary()
+  if vim.fn.executable("curl") ~= 1 then
+    vim.notify("nvmd: curl is required to download prebuilt binaries", vim.log.levels.ERROR)
+    return
+  end
+  if vim.fn.executable("tar") ~= 1 then
+    vim.notify("nvmd: tar is required to unpack prebuilt binaries", vim.log.levels.ERROR)
+    return
+  end
+
+  local asset, asset_error = platform_asset()
+  if not asset then
+    vim.notify("nvmd: " .. asset_error, vim.log.levels.ERROR)
+    return
+  end
+
+  local root = plugin_root()
+  local archive = vim.fn.tempname() .. ".tar.gz"
+  local url = release_url(asset)
+  vim.notify("nvmd: downloading " .. asset .. "...", vim.log.levels.INFO)
+  vim.fn.jobstart({ "curl", "-fL", "-o", archive, url }, {
+    stdout_buffered = true,
+    stderr_buffered = true,
+    on_exit = function(_, code)
+      if code ~= 0 then
+        vim.schedule(function()
+          vim.notify("nvmd: download failed from " .. url, vim.log.levels.ERROR)
+        end)
+        return
+      end
+
+      vim.fn.mkdir(root .. "/bin", "p")
+      vim.fn.jobstart({ "tar", "-xzf", archive, "-C", root .. "/bin" }, {
+        stdout_buffered = true,
+        stderr_buffered = true,
+        on_exit = function(_, tar_code)
+          vim.fn.delete(archive)
+          vim.schedule(function()
+            if tar_code == 0 and executable(downloaded_binary()) then
+              vim.notify("nvmd: installed prebuilt binary", vim.log.levels.INFO)
+            else
+              vim.notify("nvmd: failed to unpack prebuilt binary", vim.log.levels.ERROR)
+            end
+          end)
+        end,
+      })
+    end,
+  })
 end
 
 function M.build()
@@ -326,6 +421,7 @@ function M.setup(opts)
   })
   vim.api.nvim_create_user_command("NvmdRefresh", M.refresh, { force = true })
   vim.api.nvim_create_user_command("NvmdBuild", M.build, { force = true })
+  vim.api.nvim_create_user_command("NvmdInstallBinary", M.install_binary, { force = true })
 
   local group = vim.api.nvim_create_augroup(group_name, { clear = true })
   vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI", "BufEnter" }, {

@@ -24,13 +24,13 @@ cargo run -- --help
 
 ## Neovim Plugin
 
-The plugin automatically uses the release binary built inside its installed
-directory, falling back to `nvmd` on `PATH`. With `packer.nvim`:
+The plugin can use prebuilt release binaries, so users do not need Rust unless
+they want to build from source. With `packer.nvim`:
 
 ```lua
 use {
   "ryuux05/nvmd",
-  run = "cargo build --release",
+  run = "sh scripts/install-binary.sh",
   config = function()
     require("nvmd").setup({
       live_reload = true,
@@ -49,7 +49,7 @@ With `lazy.nvim`:
 ```lua
 {
   "ryuux05/nvmd",
-  build = "cargo build --release",
+  build = "sh scripts/install-binary.sh",
   config = function()
     require("nvmd").setup({
       live_reload = true,
@@ -69,11 +69,14 @@ Available commands:
 - `:NvmdClose` closes that file's viewer.
 - `:NvmdToggle` toggles that file's viewer.
 - `:NvmdRefresh` republishes the cursor position or opens the viewer if needed.
+- `:NvmdInstallBinary` downloads the matching prebuilt binary from the latest
+  GitHub release.
 - `:NvmdBuild` runs `cargo build --release` inside the installed plugin
-  directory when the binary was not built by the plugin manager.
+  directory when building from source.
 
-If `:NvmdOpen` reports that `nvmd` is not executable, install Rust/Cargo and
-run `:NvmdBuild`, `:PackerSync`, or your plugin manager's rebuild command.
+If `:NvmdOpen` reports that the binary is missing, run `:NvmdInstallBinary`,
+`:PackerSync`, or your plugin manager's rebuild command. Building from source
+with `:NvmdBuild` requires Rust/Cargo.
 
 While a viewer is open, moving the Neovim cursor scrolls the preview to the
 corresponding rendered block. Entering a Mermaid fenced block also focuses that
