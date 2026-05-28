@@ -44,6 +44,28 @@ Run `:PackerSync`, open a Markdown file, and use `:NvmdOpen`. You can also
 place the cursor over a Markdown filename in a file picker or file explorer and
 run `:NvmdOpen` without opening that file first.
 
+If you previously installed `nvmd` with `run = "cargo build --release"`, remove
+the old plugin block from your Neovim config first, then run:
+
+```vim
+:PackerCompile
+:PackerClean
+```
+
+If `:PackerClean` does not remove the old checkout, delete it manually:
+
+```sh
+rm -rf ~/.local/share/nvim/site/pack/packer/start/nvmd
+rm -rf ~/.local/share/nvim/site/pack/packer/opt/nvmd
+```
+
+After that, add the `run = "sh scripts/install-binary.sh"` block above, restart
+Neovim, and run:
+
+```vim
+:PackerSync
+```
+
 With `lazy.nvim`:
 
 ```lua
@@ -77,6 +99,10 @@ Available commands:
 If `:NvmdOpen` reports that the binary is missing, run `:NvmdInstallBinary`,
 `:PackerSync`, or your plugin manager's rebuild command. Building from source
 with `:NvmdBuild` requires Rust/Cargo.
+
+Prebuilt install requires a GitHub Release with binary assets. Maintainers can
+create one by pushing a version tag such as `v0.1.0`; the release workflow will
+build and upload the platform binaries.
 
 While a viewer is open, moving the Neovim cursor scrolls the preview to the
 corresponding rendered block. Entering a Mermaid fenced block also focuses that
