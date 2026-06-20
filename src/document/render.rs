@@ -816,9 +816,10 @@ fn code_block(
 
     let block_id = ui.next_auto_id();
     let copy_id = egui::Id::new(("code-copy", block_id));
-    let hover_id = egui::Id::new(("code-hover", block_id));
+    let alpha_id = egui::Id::new(("code-alpha", block_id));
 
-    let was_hovered: bool = ui.data(|d| d.get_temp(hover_id).unwrap_or(false));
+    // Animated opacity: 0.0 = fully hidden, 1.0 = fully visible.
+    let hover_alpha: f32 = ui.data(|d| d.get_temp(alpha_id).unwrap_or(0.0_f32));
 
     ui.add_space(4.0);
 
@@ -828,7 +829,8 @@ fn code_block(
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(style.code_margin))
         .show(ui, |ui| {
-            // Header row: language label left, copy button right (only on hover).
+            // Header row is always rendered at fixed height — no layout shift.
+            // The icon color's alpha is animated so it fades in/out smoothly.
             ui.horizontal(|ui| {
                 if let Some(lang) = language {
                     ui.label(
@@ -837,26 +839,27 @@ fn code_block(
                             .color(style.colors.muted_text),
                     );
                 }
-                if was_hovered {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let copied_at: Option<std::time::Instant> =
-                            ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
-                        let is_copied = copied_at
-                            .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
-                            .unwrap_or(false);
-                        let btn_label = if is_copied { "✓" } else { "copy" };
-                        let btn = egui::Button::new(
-                            RichText::new(btn_label)
-                                .size(11.0)
-                                .color(style.colors.muted_text),
-                        )
-                        .fill(egui::Color32::TRANSPARENT);
-                        if ui.add(btn).clicked() && !is_copied {
-                            ui.ctx().copy_text(code.to_owned());
-                            ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
-                        }
-                    });
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let copied_at: Option<std::time::Instant> =
+                        ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
+                    let is_copied = copied_at
+                        .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
+                        .unwrap_or(false);
+                    let icon = if is_copied { "✓" } else { "⧉" };
+                    let base = if is_copied { style.colors.link } else { style.colors.muted_text };
+                    let icon_color = egui::Color32::from_rgba_unmultiplied(
+                        base.r(), base.g(), base.b(),
+                        (hover_alpha * base.a() as f32).round() as u8,
+                    );
+                    let btn = egui::Button::new(
+                        RichText::new(icon).size(14.0).color(icon_color),
+                    )
+                    .fill(egui::Color32::TRANSPARENT);
+                    if ui.add(btn).clicked() && hover_alpha > 0.1 && !is_copied {
+                        ui.ctx().copy_text(code.to_owned());
+                        ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
+                    }
+                });
             });
             ui.add_space(6.0);
             // id_salt ensures each code block's ScrollArea has a unique ID.
@@ -895,9 +898,13 @@ fn code_block(
                 });
         });
 
+    // Lerp alpha toward target using actual frame delta time for smooth, rate-independent easing.
     let is_hovered = ui.rect_contains_pointer(frame_resp.response.rect);
-    ui.data_mut(|d| d.insert_temp(hover_id, is_hovered));
-    if is_hovered || was_hovered {
+    let target = if is_hovered { 1.0_f32 } else { 0.0_f32 };
+    let dt = ui.ctx().input(|i| i.unstable_dt).min(0.1);
+    let new_alpha = (hover_alpha + (target - hover_alpha) * (1.0 - (-8.0 * dt).exp())).clamp(0.0, 1.0);
+    ui.data_mut(|d| d.insert_temp(alpha_id, new_alpha));
+    if (new_alpha - target).abs() > 0.002 {
         ui.ctx().request_repaint();
     }
 }
