@@ -84,6 +84,9 @@ impl Builder {
             Event::HardBreak => self.push_inline(Inline::HardBreak),
             Event::Rule => self.push_block(Block::HorizontalRule),
             Event::TaskListMarker(checked) => self.current_item_checked = Some(checked),
+            Event::FootnoteReference(label) => {
+                self.push_inline(Inline::FootnoteRef(label.into_string()));
+            }
             _ => {}
         }
     }

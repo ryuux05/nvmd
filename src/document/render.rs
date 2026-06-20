@@ -221,25 +221,28 @@ fn render_block(
             table_block(ui, alignments, header, rows, style);
         }
         Block::FootnoteDefinition { label, blocks } => {
-            ui.label(
-                RichText::new(format!("[^{label}]"))
-                    .font(FontId::new(style.code_font_size, FontFamily::Monospace))
-                    .color(style.colors.muted_text),
-            );
-            for block in blocks {
-                render_block(
-                    ui,
-                    block,
-                    render_mermaid,
-                    style,
-                    mermaid_index,
-                    mermaid_count,
-                    navigation,
-                    highlighter,
-                    image_cache,
-                    false,
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("[{label}]"))
+                        .font(FontId::new(style.small_font_size, FontFamily::Proportional))
+                        .color(style.colors.link),
                 );
-            }
+                ui.visuals_mut().override_text_color = Some(style.colors.muted_text);
+                for block in blocks {
+                    render_block(
+                        ui,
+                        &mut block.clone(),
+                        render_mermaid,
+                        style,
+                        mermaid_index,
+                        mermaid_count,
+                        navigation,
+                        highlighter,
+                        image_cache,
+                        false,
+                    );
+                }
+            });
         }
         Block::DefinitionList { items } => {
             for item in items {
@@ -576,6 +579,16 @@ fn append_inlines(
                     line_height,
                     markdown,
                 );
+            }
+            Inline::FootnoteRef(label) => {
+                let sup_font = FontId::new(
+                    (font_id.size * 0.72).max(8.0),
+                    font_id.family.clone(),
+                );
+                let text = format!("[{label}]");
+                let mut fmt = TextFormat::simple(sup_font, markdown.colors.link);
+                fmt.valign = Align::Min;
+                job.append(&text, 0.0, fmt);
             }
             Inline::SoftBreak => append_inline_text(
                 job,

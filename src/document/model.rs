@@ -93,6 +93,7 @@ pub enum Inline {
     },
     Html(String),
     Math(String),
+    FootnoteRef(String),
     SoftBreak,
     HardBreak,
 }
@@ -148,6 +149,11 @@ fn push_plain_text(inlines: &[Inline], out: &mut String) {
             | Inline::Strikethrough(children) => push_plain_text(children, out),
             Inline::Link { children, .. } => push_plain_text(children, out),
             Inline::Image { alt, .. } => push_plain_text(alt, out),
+            Inline::FootnoteRef(label) => {
+                out.push('[');
+                out.push_str(label);
+                out.push(']');
+            }
             Inline::SoftBreak | Inline::HardBreak => out.push('\n'),
         }
     }
