@@ -11,6 +11,7 @@ pub struct ViewerSettings {
     pub window_width: f32,
     pub window_height: f32,
     pub enable_mermaid: bool,
+    pub font_scale: f32,
     pub page_max_width: f32,
     pub page_inner_margin: f32,
     pub body_font_size: f32,
@@ -99,6 +100,22 @@ pub struct MarkdownColors {
     pub warning_border: Color32,
     pub chrome_background: Color32,
     pub chrome_border: Color32,
+    // GFM alert block colors
+    pub alert_note_border: Color32,
+    pub alert_note_bg: Color32,
+    pub alert_note_text: Color32,
+    pub alert_tip_border: Color32,
+    pub alert_tip_bg: Color32,
+    pub alert_tip_text: Color32,
+    pub alert_important_border: Color32,
+    pub alert_important_bg: Color32,
+    pub alert_important_text: Color32,
+    pub alert_warning_border: Color32,
+    pub alert_warning_bg: Color32,
+    pub alert_warning_text: Color32,
+    pub alert_caution_border: Color32,
+    pub alert_caution_bg: Color32,
+    pub alert_caution_text: Color32,
 }
 
 impl Default for ViewerSettings {
@@ -109,6 +126,7 @@ impl Default for ViewerSettings {
             window_width: 1280.0,
             window_height: 900.0,
             enable_mermaid: true,
+            font_scale: 1.0,
             page_max_width: style.page_max_width,
             page_inner_margin: style.page_inner_margin,
             body_font_size: style.body_font_size,
@@ -182,6 +200,11 @@ impl ViewerSettings {
             self.table_spacing_y.clamp(0.0, 64.0),
         );
         style.heading_sizes = self.heading_sizes.map(|size| size.clamp(10.0, 40.0));
+        let scale = self.font_scale.clamp(0.5, 3.0);
+        style.body_font_size *= scale;
+        style.code_font_size *= scale;
+        style.small_font_size *= scale;
+        style.heading_sizes = style.heading_sizes.map(|s| s * scale);
         style
     }
 
@@ -218,6 +241,21 @@ impl MarkdownStyle {
                 warning_border: Color32::from_rgb(52, 36, 90),
                 chrome_background: Color32::from_rgb(8, 9, 15),
                 chrome_border: Color32::from_rgb(22, 30, 50),
+                alert_note_border: Color32::from_rgb(56, 139, 253),
+                alert_note_bg: Color32::from_rgb(10, 18, 38),
+                alert_note_text: Color32::from_rgb(121, 174, 255),
+                alert_tip_border: Color32::from_rgb(46, 160, 67),
+                alert_tip_bg: Color32::from_rgb(10, 24, 14),
+                alert_tip_text: Color32::from_rgb(80, 200, 100),
+                alert_important_border: Color32::from_rgb(137, 87, 229),
+                alert_important_bg: Color32::from_rgb(18, 12, 34),
+                alert_important_text: Color32::from_rgb(180, 140, 255),
+                alert_warning_border: Color32::from_rgb(210, 153, 34),
+                alert_warning_bg: Color32::from_rgb(26, 22, 8),
+                alert_warning_text: Color32::from_rgb(230, 186, 80),
+                alert_caution_border: Color32::from_rgb(218, 54, 51),
+                alert_caution_bg: Color32::from_rgb(28, 10, 10),
+                alert_caution_text: Color32::from_rgb(240, 100, 90),
             },
             is_dark: true,
             body_font_size: 16.0,
@@ -259,6 +297,21 @@ impl MarkdownStyle {
                 warning_border: Color32::from_rgb(200, 170, 240),
                 chrome_background: Color32::from_rgb(240, 242, 244),
                 chrome_border: Color32::from_rgb(208, 215, 222),
+                alert_note_border: Color32::from_rgb(9, 105, 218),
+                alert_note_bg: Color32::from_rgb(230, 242, 255),
+                alert_note_text: Color32::from_rgb(9, 71, 148),
+                alert_tip_border: Color32::from_rgb(26, 127, 55),
+                alert_tip_bg: Color32::from_rgb(220, 245, 226),
+                alert_tip_text: Color32::from_rgb(20, 100, 40),
+                alert_important_border: Color32::from_rgb(130, 80, 215),
+                alert_important_bg: Color32::from_rgb(240, 232, 255),
+                alert_important_text: Color32::from_rgb(90, 50, 160),
+                alert_warning_border: Color32::from_rgb(180, 130, 20),
+                alert_warning_bg: Color32::from_rgb(255, 248, 220),
+                alert_warning_text: Color32::from_rgb(130, 90, 10),
+                alert_caution_border: Color32::from_rgb(200, 50, 47),
+                alert_caution_bg: Color32::from_rgb(255, 232, 230),
+                alert_caution_text: Color32::from_rgb(160, 30, 28),
             },
             is_dark: false,
             body_font_size: 16.0,

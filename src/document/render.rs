@@ -4,10 +4,70 @@ use eframe::egui::{
     vec2, Align, Color32, FontFamily, FontId, Label, Rect, RichText, Stroke,
 };
 
-use crate::app::ImageEntry;
+use crate::app::{ImageEntry, TocEntry};
 use crate::document::model::{plain_text, Block, Document, Frontmatter, FrontmatterFormat, Inline};
 use crate::input::NavigationState;
 use crate::render::settings::MarkdownStyle;
+
+/// Convert a heading's plain text to a GitHub-style anchor ID.
+fn heading_to_id(text: &str) -> String {
+    text.chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '-')
+        .map(|c| if c.is_whitespace() { '-' } else { c.to_lowercase().next().unwrap_or(c) })
+        .collect()
+}
+
+/// Detect a GFM alert prefix like `[!NOTE]` in the first paragraph of a blockquote.
+fn detect_alert(blocks: &[Block]) -> Option<(&'static str, &'static str)> {
+    if let Some(Block::Paragraph { content }) = blocks.first() {
+        let text = plain_text(content);
+        let upper = text.trim().to_uppercase();
+        let upper = upper.trim_start_matches("[!").trim_end_matches(']');
+        return match upper {
+            "NOTE"      => Some(("ℹ  Note",      "note")),
+            "TIP"       => Some(("💡 Tip",        "tip")),
+            "IMPORTANT" => Some(("★  Important",  "important")),
+            "WARNING"   => Some(("⚠  Warning",    "warning")),
+            "CAUTION"   => Some(("✖  Caution",    "caution")),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Convert MathML output to readable Unicode text by stripping XML tags and
+/// decoding common entities. Used to display math without a full MathML renderer.
+fn mml_to_text(mml: &str) -> String {
+    let mut out = String::with_capacity(mml.len());
+    let mut in_tag = false;
+    for ch in mml.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => in_tag = false,
+            _ if !in_tag => out.push(ch),
+            _ => {}
+        }
+    }
+    out.replace("&lt;", "<")
+       .replace("&gt;", ">")
+       .replace("&amp;", "&")
+       .replace("&nbsp;", " ")
+       .split_whitespace()
+       .collect::<Vec<_>>()
+       .join(" ")
+}
+
+/// Dispatch a link click: anchor fragments scroll within the document; external URLs open a browser.
+fn handle_link_click(url: &str, toc_entries: &[TocEntry], navigation: &mut NavigationState) {
+    if let Some(fragment) = url.strip_prefix('#') {
+        let target = heading_to_id(fragment);
+        if let Some(entry) = toc_entries.iter().find(|e| heading_to_id(&e.text) == target) {
+            navigation.request_source_block(entry.block_index);
+        }
+    } else if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
+        let _ = open::that(url);
+    }
+}
 
 pub fn render_document(
     ui: &mut egui::Ui,
@@ -19,6 +79,7 @@ pub fn render_document(
     image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
     search_match: Option<usize>,
     visible_heading_block: &mut Option<usize>,
+    toc_entries: &[TocEntry],
 ) {
     if let Some(fm) = &document.frontmatter {
         render_frontmatter(ui, fm, style);
@@ -54,6 +115,7 @@ pub fn render_document(
             highlighter,
             image_cache,
             is_search_match,
+            toc_entries,
         );
     }
 }
@@ -69,6 +131,7 @@ fn render_block(
     highlighter: Option<&crate::highlight::Highlighter>,
     image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
     is_search_match: bool,
+    toc_entries: &[TocEntry],
 ) {
     if is_search_match {
         let rect = ui.available_rect_before_wrap();
@@ -105,6 +168,8 @@ fn render_block(
                 style.colors.strong_text,
                 true,
                 style,
+            toc_entries,
+            navigation,
             );
             if *level <= 2 {
                 ui.add_space(6.0);
@@ -113,7 +178,7 @@ fn render_block(
         }
         Block::Paragraph { content } => {
             if content.iter().any(|i| matches!(i, Inline::Image { .. })) {
-                render_paragraph_with_images(ui, content, style, image_cache);
+                render_paragraph_with_images(ui, content, style, image_cache, toc_entries, navigation);
             } else {
                 inline_label(
                     ui,
@@ -122,6 +187,8 @@ fn render_block(
                     style.colors.text,
                     false,
                     style,
+                toc_entries,
+                navigation,
                 );
             }
         }
@@ -176,41 +243,62 @@ fn render_block(
                                 highlighter,
                                 image_cache,
                                 false,
+                                toc_entries,
                             );
+
                         }
                     });
                 });
             }
         }
         Block::Quote { blocks } => {
-            let frame_response = egui::Frame::new()
-                .fill(style.colors.quote_background)
-                .stroke(Stroke::NONE)
-                .inner_margin(egui::Margin::same(style.quote_margin))
-                .show(ui, |ui| {
-                    ui.visuals_mut().override_text_color = Some(style.colors.quote_text);
-                    for block in blocks {
-                        render_block(
-                            ui,
-                            block,
-                            render_mermaid,
-                            style,
-                            mermaid_index,
-                            mermaid_count,
-                            navigation,
-                            highlighter,
-                            image_cache,
-                            false,
-                        );
-                        ui.add_space(style.paragraph_gap * 0.5);
-                    }
-                });
-            let rect = frame_response.response.rect;
-            ui.painter().rect_filled(
-                Rect::from_min_max(rect.min, pos2(rect.min.x + 3.0, rect.max.y)),
-                0.0,
-                style.colors.quote_border,
-            );
+            if let Some((label, kind)) = detect_alert(blocks) {
+                let (border, bg, text_color) = match kind {
+                    "note"      => (style.colors.alert_note_border,      style.colors.alert_note_bg,      style.colors.alert_note_text),
+                    "tip"       => (style.colors.alert_tip_border,       style.colors.alert_tip_bg,       style.colors.alert_tip_text),
+                    "important" => (style.colors.alert_important_border, style.colors.alert_important_bg, style.colors.alert_important_text),
+                    "warning"   => (style.colors.alert_warning_border,   style.colors.alert_warning_bg,   style.colors.alert_warning_text),
+                    _           => (style.colors.alert_caution_border,   style.colors.alert_caution_bg,   style.colors.alert_caution_text),
+                };
+                let frame_response = egui::Frame::new()
+                    .fill(bg)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin { left: 14, right: 12, top: 10, bottom: 10 })
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(label).size(style.small_font_size).strong().color(border));
+                        ui.add_space(4.0);
+                        ui.visuals_mut().override_text_color = Some(text_color);
+                        for block in blocks.iter().skip(1) {
+                            render_block(ui, &mut block.clone(), render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries);
+                            ui.add_space(style.paragraph_gap * 0.5);
+                        }
+                    });
+                let rect = frame_response.response.rect;
+                ui.painter().rect_filled(
+                    Rect::from_min_max(rect.min, pos2(rect.min.x + 3.0, rect.max.y)),
+                    0.0,
+                    border,
+                );
+            } else {
+                let frame_response = egui::Frame::new()
+                    .fill(style.colors.quote_background)
+                    .stroke(Stroke::NONE)
+                    .inner_margin(egui::Margin::same(style.quote_margin))
+                    .show(ui, |ui| {
+                        ui.visuals_mut().override_text_color = Some(style.colors.quote_text);
+                        for block in blocks {
+                            render_block(ui, block, render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries);
+                            ui.add_space(style.paragraph_gap * 0.5);
+                        }
+                    });
+                let rect = frame_response.response.rect;
+                ui.painter().rect_filled(
+                    Rect::from_min_max(rect.min, pos2(rect.min.x + 3.0, rect.max.y)),
+                    0.0,
+                    style.colors.quote_border,
+                );
+            }
         }
         Block::HorizontalRule => {
             ui.add_space(8.0);
@@ -247,7 +335,9 @@ fn render_block(
                         highlighter,
                         image_cache,
                         false,
+                        toc_entries,
                     );
+
                 }
             });
         }
@@ -260,6 +350,8 @@ fn render_block(
                     style.colors.strong_text,
                     true,
                     style,
+                toc_entries,
+                navigation,
                 );
                 for blocks in &item.definitions {
                     ui.indent("definition-list-item", |ui| {
@@ -276,7 +368,9 @@ fn render_block(
                                 highlighter,
                                 image_cache,
                                 false,
+                                toc_entries,
                             );
+
                         }
                     });
                 }
@@ -284,14 +378,25 @@ fn render_block(
             }
         }
         Block::MathBlock { expression } => {
-            code_block(
-                ui,
-                Some("math"),
-                expression,
-                Some("Math rendering is not implemented"),
-                style,
-                None,
-            );
+            let rendered = latex2mathml::latex_to_mathml(expression, latex2mathml::DisplayStyle::Block)
+                .map(|mml| mml_to_text(&mml))
+                .unwrap_or_else(|_| expression.clone());
+            egui::Frame::new()
+                .fill(style.colors.code_background)
+                .stroke(Stroke::new(1.0, style.colors.page_border))
+                .corner_radius(6.0)
+                .inner_margin(egui::Margin::same(style.code_margin))
+                .show(ui, |ui| {
+                    ui.add(
+                        Label::new(
+                            RichText::new(&rendered)
+                                .font(FontId::new(style.body_font_size * 1.1, FontFamily::Proportional))
+                                .color(style.colors.strong_text)
+                                .italics(),
+                        )
+                        .wrap(),
+                    );
+                });
         }
         Block::Mermaid {
             source,
@@ -365,6 +470,8 @@ fn inline_label(
     color: Color32,
     strong: bool,
     markdown: &MarkdownStyle,
+    toc_entries: &[TocEntry],
+    navigation: &mut NavigationState,
 ) {
     let line_height = font_id.size * markdown.line_height;
     let layout = inline_layout(
@@ -401,9 +508,7 @@ fn inline_label(
                         if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
                             for (section_idx, url) in &layout.link_sections {
                                 if glyph.section_index == *section_idx {
-                                    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
-                                        let _ = open::that(url);
-                                    }
+                                    handle_link_click(url, toc_entries, navigation);
                                     break 'hit;
                                 }
                             }
@@ -577,17 +682,20 @@ fn append_inlines(
                     markdown,
                 );
             }
-            Inline::Html(html) | Inline::Math(html) => {
-                append_inline_text(
-                    job,
-                    code_sections,
-                    html,
-                    &font_id,
-                    color,
-                    style,
-                    line_height,
-                    markdown,
-                );
+            Inline::Html(html) => {
+                append_inline_text(job, code_sections, html, &font_id, color, style, line_height, markdown);
+            }
+            Inline::Math(expr) => {
+                let text = latex2mathml::latex_to_mathml(expr, latex2mathml::DisplayStyle::Inline)
+                    .map(|mml| mml_to_text(&mml))
+                    .unwrap_or_else(|_| expr.clone());
+                let math_fmt = TextFormat {
+                    font_id: font_id.clone(),
+                    color: markdown.colors.strong_text,
+                    italics: true,
+                    ..Default::default()
+                };
+                job.append(&text, 0.0, math_fmt);
             }
             Inline::FootnoteRef(label) => {
                 let sup_font = FontId::new(
@@ -938,6 +1046,8 @@ fn render_paragraph_with_images(
     content: &[Inline],
     style: &MarkdownStyle,
     image_cache: &mut std::collections::HashMap<String, ImageEntry>,
+    toc_entries: &[TocEntry],
+    navigation: &mut NavigationState,
 ) {
     for inline in content {
         match inline {
@@ -1006,6 +1116,8 @@ fn render_paragraph_with_images(
                     style.colors.text,
                     false,
                     style,
+                toc_entries,
+                navigation,
                 );
             }
         }

@@ -19,10 +19,10 @@ use crate::sync::CursorSync;
 use crate::watcher::FileWatcher;
 
 #[derive(Debug, Clone)]
-struct TocEntry {
-    block_index: usize,
-    level: u8,
-    text: String,
+pub struct TocEntry {
+    pub block_index: usize,
+    pub level: u8,
+    pub text: String,
 }
 
 #[derive(Debug, Default)]
@@ -733,6 +733,7 @@ impl NvmdApp {
                                                     &mut self.image_cache,
                                                     search_match,
                                                     &mut visible_heading_block,
+                                                    &self.toc_entries,
                                                 );
                                                 self.active_toc_index = visible_heading_block
                                                     .and_then(|bi| self.toc_entries.iter().position(|e| e.block_index == bi));
@@ -812,6 +813,18 @@ impl NvmdApp {
                         let block_index = self.toc_entries[self.heading_cursor].block_index;
                         self.navigation.request_source_block(block_index);
                     }
+                }
+                InputAction::ZoomIn => {
+                    self.settings.font_scale = (self.settings.font_scale + 0.1).clamp(0.5, 3.0);
+                    let _ = self.settings.save();
+                }
+                InputAction::ZoomOut => {
+                    self.settings.font_scale = (self.settings.font_scale - 0.1).clamp(0.5, 3.0);
+                    let _ = self.settings.save();
+                }
+                InputAction::ZoomReset => {
+                    self.settings.font_scale = 1.0;
+                    let _ = self.settings.save();
                 }
             }
         }

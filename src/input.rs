@@ -369,6 +369,9 @@ pub enum InputAction {
     ToggleSettings,
     CloseWindow,
     HeadingJump(i32),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
 }
 
 pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState, keys: &KeyMap) -> Vec<InputAction> {
@@ -403,6 +406,16 @@ pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState, ke
         } else if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
             actions.push(InputAction::HeadingJump(-1));
         }
+    }
+    if !ctx.wants_keyboard_input() {
+        let zoom_in = ctx.input(|i| {
+            i.key_pressed(egui::Key::Plus) || i.key_pressed(egui::Key::Equals)
+        });
+        let zoom_out = ctx.input(|i| i.key_pressed(egui::Key::Minus));
+        let zoom_reset = ctx.input(|i| i.key_pressed(egui::Key::Num0));
+        if zoom_in { actions.push(InputAction::ZoomIn); }
+        if zoom_out { actions.push(InputAction::ZoomOut); }
+        if zoom_reset { actions.push(InputAction::ZoomReset); }
     }
     navigation.handle_navigation_input(ctx, keys);
     actions
