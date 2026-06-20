@@ -279,6 +279,8 @@ pub struct NvmdApp {
     image_cache: std::collections::HashMap<String, ImageEntry>,
     image_results: Receiver<ImageJobResult>,
     image_sender: mpsc::Sender<ImageJobResult>,
+    remembered_scroll: f32,
+    restore_scroll: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -344,6 +346,8 @@ impl NvmdApp {
                 image_cache: HashMap::new(),
                 image_results,
                 image_sender,
+                remembered_scroll: 0.0,
+                restore_scroll: false,
             };
 
             if app.watcher.is_none() {
@@ -395,6 +399,8 @@ impl NvmdApp {
             image_cache: HashMap::new(),
             image_results,
             image_sender,
+            remembered_scroll: 0.0,
+            restore_scroll: false,
         }
     }
 
@@ -402,6 +408,7 @@ impl NvmdApp {
         self.render_generation = self.render_generation.wrapping_add(1);
         self.mermaid_jobs.clear();
         self.image_cache.clear();
+        self.restore_scroll = true;
         match loader::load_markdown(reload_path(&self.config, &self.options)) {
             Ok(source) => {
                 let mut document = parser::parse_markdown(&source);
@@ -641,9 +648,13 @@ impl NvmdApp {
                 let document_scroll = self.navigation.take_document_scroll();
                 let document_jump = self.navigation.take_document_jump();
                 self.navigation.begin_target_collection();
-                let scroll_output = egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
+                let mut scroll_area = egui::ScrollArea::vertical()
+                    .auto_shrink([false, false]);
+                if self.restore_scroll && !self.navigation.has_pending_source_block() {
+                    scroll_area = scroll_area.vertical_scroll_offset(self.remembered_scroll);
+                    self.restore_scroll = false;
+                }
+                let scroll_output = scroll_area.show(ui, |ui| {
                         if document_scroll != 0.0 {
                             ui.scroll_with_delta(egui::vec2(0.0, document_scroll));
                         }
@@ -701,6 +712,7 @@ impl NvmdApp {
                         }
                     });
                 self.navigation.set_viewport(scroll_output.inner_rect);
+                self.remembered_scroll = scroll_output.state.offset.y;
             });
 
         if self.show_help {

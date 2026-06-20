@@ -243,14 +243,17 @@ fn render_block(
         }
         Block::DefinitionList { items } => {
             for item in items {
-                ui.label(
-                    RichText::new(plain_text(&item.term))
-                        .size(style.body_font_size)
-                        .strong()
-                        .color(style.colors.strong_text),
+                inline_label(
+                    ui,
+                    &item.term,
+                    FontId::new(style.body_font_size, FontFamily::Proportional),
+                    style.colors.strong_text,
+                    true,
+                    style,
                 );
                 for blocks in &item.definitions {
                     ui.indent("definition-list-item", |ui| {
+                        ui.visuals_mut().override_text_color = Some(style.colors.muted_text);
                         for block in blocks {
                             render_block(
                                 ui,
@@ -267,6 +270,7 @@ fn render_block(
                         }
                     });
                 }
+                ui.add_space(style.paragraph_gap * 0.5);
             }
         }
         Block::MathBlock { expression } => {

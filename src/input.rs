@@ -194,6 +194,10 @@ impl NavigationState {
         self.source_block.take()
     }
 
+    pub fn has_pending_source_block(&self) -> bool {
+        self.source_block.is_some()
+    }
+
     pub fn apply_synced_block_mode(&mut self, mermaid_index: Option<usize>) {
         self.mode = mermaid_index
             .map(|index| NavigationMode::MermaidControl { index })
