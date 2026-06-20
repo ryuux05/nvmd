@@ -5,7 +5,7 @@ use eframe::egui::{
 };
 
 use crate::app::ImageEntry;
-use crate::document::model::{plain_text, Block, Document, Inline};
+use crate::document::model::{plain_text, Block, Document, Frontmatter, FrontmatterFormat, Inline};
 use crate::input::NavigationState;
 use crate::render::settings::MarkdownStyle;
 
@@ -19,6 +19,10 @@ pub fn render_document(
     image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
     search_match: Option<usize>,
 ) {
+    if let Some(fm) = &document.frontmatter {
+        render_frontmatter(ui, fm, style);
+        ui.add_space(style.paragraph_gap);
+    }
     let mut mermaid_index = 0;
     let mermaid_count = count_mermaid_blocks(&document.blocks);
     let source_block = navigation.take_source_block();
@@ -210,11 +214,11 @@ fn render_block(
             code_block(ui, Some("html"), html, Some("Raw HTML block"), style, None);
         }
         Block::Table {
-            alignments: _,
+            alignments,
             header,
             rows,
         } => {
-            table_block(ui, header, rows, style);
+            table_block(ui, alignments, header, rows, style);
         }
         Block::FootnoteDefinition { label, blocks } => {
             ui.label(
@@ -665,34 +669,88 @@ fn paint_inline_code_backgrounds(
 
 fn table_block(
     ui: &mut egui::Ui,
+    alignments: &[crate::document::model::TableAlignment],
     header: &[Vec<Inline>],
     rows: &[Vec<Vec<Inline>>],
     style: &MarkdownStyle,
 ) {
+    use crate::document::model::TableAlignment;
+
+    let col_align = |col: usize| match alignments.get(col).copied().unwrap_or(TableAlignment::None) {
+        TableAlignment::Center => egui::Align::Center,
+        TableAlignment::Right => egui::Align::RIGHT,
+        _ => egui::Align::LEFT,
+    };
+
     ui.scope(|ui| {
         ui.visuals_mut().faint_bg_color = style.colors.table_stripe;
         egui::Grid::new(ui.next_auto_id())
             .striped(true)
             .spacing(style.table_spacing)
             .show(ui, |ui| {
-                for cell in header {
-                    ui.label(
-                        RichText::new(plain_text(cell))
-                            .size(style.body_font_size)
-                            .strong()
-                            .color(style.colors.strong_text),
-                    );
+                for (col, cell) in header.iter().enumerate() {
+                    ui.with_layout(egui::Layout::left_to_right(col_align(col)), |ui| {
+                        let layout = inline_layout(
+                            cell,
+                            FontId::new(style.body_font_size, FontFamily::Proportional),
+                            style.colors.strong_text,
+                            true,
+                            ui.available_width().max(1.0),
+                            style.body_font_size * style.line_height,
+                            style,
+                        );
+                        let (pos, galley, _) = Label::new(layout.job).wrap().layout_in_ui(ui);
+                        paint_inline_code_backgrounds(
+                            ui, pos, &galley, &layout.code_sections,
+                            style.colors.inline_code_background,
+                        );
+                        ui.painter().galley(pos, galley.clone(), style.colors.strong_text);
+                    });
                 }
                 if !header.is_empty() {
                     ui.end_row();
                 }
                 for row in rows {
-                    for cell in row {
-                        ui.label(
-                            RichText::new(plain_text(cell))
-                                .size(style.body_font_size)
-                                .color(style.colors.text),
-                        );
+                    for (col, cell) in row.iter().enumerate() {
+                        ui.with_layout(egui::Layout::left_to_right(col_align(col)), |ui| {
+                            let layout = inline_layout(
+                                cell,
+                                FontId::new(style.body_font_size, FontFamily::Proportional),
+                                style.colors.text,
+                                false,
+                                ui.available_width().max(1.0),
+                                style.body_font_size * style.line_height,
+                                style,
+                            );
+                            let has_links = !layout.link_sections.is_empty();
+                            let sense = if has_links { egui::Sense::click() } else { egui::Sense::hover() };
+                            let (pos, galley, response) = Label::new(layout.job).sense(sense).wrap().layout_in_ui(ui);
+                            paint_inline_code_backgrounds(
+                                ui, pos, &galley, &layout.code_sections,
+                                style.colors.inline_code_background,
+                            );
+                            ui.painter().galley(pos, galley.clone(), style.colors.text);
+                            if has_links && response.clicked() {
+                                if let Some(cursor_pos) = ui.ctx().pointer_interact_pos() {
+                                    let local = cursor_pos - pos.to_vec2();
+                                    'hit: for row in &galley.rows {
+                                        if local.y >= row.rect.min.y && local.y <= row.rect.max.y {
+                                            for glyph in &row.glyphs {
+                                                if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
+                                                    for (section_idx, url) in &layout.link_sections {
+                                                        if glyph.section_index == *section_idx {
+                                                            let _ = open::that(url);
+                                                            break 'hit;
+                                                        }
+                                                    }
+                                                    break 'hit;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        });
                     }
                     ui.end_row();
                 }
@@ -877,6 +935,42 @@ fn render_paragraph_with_images(
             }
         }
     }
+}
+
+fn render_frontmatter(ui: &mut egui::Ui, fm: &Frontmatter, style: &MarkdownStyle) {
+    let lang = match fm.format {
+        FrontmatterFormat::Yaml => "yaml",
+        FrontmatterFormat::Toml => "toml",
+        FrontmatterFormat::Json => "json",
+    };
+    egui::Frame::new()
+        .fill(style.colors.code_background)
+        .stroke(Stroke::new(1.0, style.colors.page_border))
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::same(10))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(lang)
+                        .font(FontId::new(style.small_font_size, FontFamily::Monospace))
+                        .color(style.colors.muted_text),
+                );
+                ui.label(
+                    RichText::new("frontmatter")
+                        .font(FontId::new(style.small_font_size, FontFamily::Monospace))
+                        .color(style.colors.muted_text),
+                );
+            });
+            ui.add_space(4.0);
+            ui.add(
+                Label::new(
+                    RichText::new(fm.raw.trim())
+                        .font(FontId::new(style.code_font_size, FontFamily::Monospace))
+                        .color(style.colors.muted_text),
+                )
+                .selectable(true),
+            );
+        });
 }
 
 fn block_top_gap(block: &Block, style: &MarkdownStyle) -> f32 {
