@@ -282,6 +282,7 @@ pub struct NvmdApp {
     remembered_scroll: f32,
     restore_scroll: bool,
     heading_cursor: usize,
+    word_count: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -350,6 +351,7 @@ impl NvmdApp {
                 remembered_scroll: 0.0,
                 restore_scroll: false,
                 heading_cursor: 0,
+                word_count: 0,
             };
 
             if app.watcher.is_none() {
@@ -404,6 +406,7 @@ impl NvmdApp {
             remembered_scroll: 0.0,
             restore_scroll: false,
             heading_cursor: 0,
+            word_count: 0,
         }
     }
 
@@ -418,6 +421,7 @@ impl NvmdApp {
                 let mut document = parser::parse_markdown(&source);
                 document.source_path = Some(self.config.markdown_path.clone());
                 self.toc_entries = extract_toc(&document);
+                self.word_count = count_words(&document.blocks);
                 if self.search.active {
                     self.search.update_matches(&document);
                 }
@@ -621,6 +625,26 @@ impl NvmdApp {
                         )
                         .truncate(),
                     );
+                    if self.word_count > 0 {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let mins = (self.word_count as f32 / 200.0).ceil() as usize;
+                            let reading = if mins <= 1 {
+                                "< 1 min".to_owned()
+                            } else {
+                                format!("{mins} min")
+                            };
+                            ui.label(
+                                egui::RichText::new(reading)
+                                    .size(11.0)
+                                    .color(markdown_style.colors.muted_text),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("{} words", self.word_count))
+                                    .size(11.0)
+                                    .color(markdown_style.colors.muted_text),
+                            );
+                        });
+                    }
                 });
             });
 
@@ -1640,6 +1664,45 @@ fn responsive_page_width(
         usable_width
     } else {
         usable_width.min(markdown_style.page_max_width)
+    }
+}
+
+fn count_words(blocks: &[Block]) -> usize {
+    blocks.iter().map(|block| count_words_in_block(block)).sum()
+}
+
+fn count_words_in_block(block: &Block) -> usize {
+    match block {
+        Block::Heading { content, .. } | Block::Paragraph { content } => {
+            plain_text(content).split_whitespace().count()
+        }
+        Block::CodeBlock { code, .. } => code.split_whitespace().count(),
+        Block::List { items, .. } => items
+            .iter()
+            .flat_map(|item| item.blocks.iter())
+            .map(count_words_in_block)
+            .sum(),
+        Block::Quote { blocks } | Block::FootnoteDefinition { blocks, .. } => {
+            blocks.iter().map(count_words_in_block).sum()
+        }
+        Block::DefinitionList { items } => items
+            .iter()
+            .map(|item| {
+                plain_text(&item.term).split_whitespace().count()
+                    + item
+                        .definitions
+                        .iter()
+                        .flat_map(|b| b.iter())
+                        .map(count_words_in_block)
+                        .sum::<usize>()
+            })
+            .sum(),
+        Block::Table { header, rows, .. } => {
+            let header_words: usize = header.iter().map(|c| plain_text(c).split_whitespace().count()).sum();
+            let row_words: usize = rows.iter().flat_map(|r| r.iter()).map(|c| plain_text(c).split_whitespace().count()).sum();
+            header_words + row_words
+        }
+        _ => 0,
     }
 }
 
