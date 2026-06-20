@@ -822,6 +822,8 @@ fn code_block(
     let was_hovered: bool = ui.data(|d| d.get_temp(hover_id).unwrap_or(false));
 
     ui.add_space(4.0);
+    // Record the top of the header row so the hover region covers both it and the frame.
+    let header_top = ui.next_widget_position().y;
     ui.horizontal(|ui| {
         if let Some(lang) = language {
             ui.label(
@@ -895,8 +897,14 @@ fn code_block(
                 });
         });
 
-    // Update hover state; request repaint so the button appears/disappears promptly.
-    let is_hovered = ui.rect_contains_pointer(frame_resp.response.rect);
+    // Hover region spans from the header row top down to the bottom of the frame,
+    // so moving the cursor up to click the copy button doesn't dismiss it.
+    let frame_rect = frame_resp.response.rect;
+    let full_rect = egui::Rect::from_min_max(
+        egui::pos2(frame_rect.left(), header_top),
+        frame_rect.max,
+    );
+    let is_hovered = ui.rect_contains_pointer(full_rect);
     ui.data_mut(|d| d.insert_temp(hover_id, is_hovered));
     if is_hovered || was_hovered {
         ui.ctx().request_repaint();
