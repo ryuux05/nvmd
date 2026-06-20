@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Read as _;
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -1465,7 +1466,21 @@ impl NvmdApp {
 }
 
 fn load_image_from_path(path: &str) -> Result<egui::ColorImage, String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let bytes = if path.starts_with("http://") || path.starts_with("https://") {
+        let response = ureq::get(path)
+            .timeout(std::time::Duration::from_secs(15))
+            .call()
+            .map_err(|e| format!("HTTP error: {e}"))?;
+        let mut buf = Vec::new();
+        response
+            .into_reader()
+            .read_to_end(&mut buf)
+            .map_err(|e: std::io::Error| e.to_string())?;
+        buf
+    } else {
+        std::fs::read(path).map_err(|e| e.to_string())?
+    };
+
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
