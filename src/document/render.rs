@@ -18,6 +18,7 @@ pub fn render_document(
     highlighter: Option<&crate::highlight::Highlighter>,
     image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
     search_match: Option<usize>,
+    visible_heading_block: &mut Option<usize>,
 ) {
     if let Some(fm) = &document.frontmatter {
         render_frontmatter(ui, fm, style);
@@ -29,6 +30,12 @@ pub fn render_document(
     for (index, block) in document.blocks.iter_mut().enumerate() {
         if index > 0 {
             ui.add_space(block_top_gap(block, style));
+        }
+        if matches!(block, Block::Heading { .. }) {
+            let pos_y = ui.next_widget_position().y;
+            if pos_y <= ui.clip_rect().center().y {
+                *visible_heading_block = Some(index);
+            }
         }
         if source_block == Some(index) {
             ui.scroll_to_cursor(Some(Align::TOP));
@@ -394,7 +401,9 @@ fn inline_label(
                         if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
                             for (section_idx, url) in &layout.link_sections {
                                 if glyph.section_index == *section_idx {
-                                    let _ = open::that(url);
+                                    if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
+                                        let _ = open::that(url);
+                                    }
                                     break 'hit;
                                 }
                             }
@@ -756,7 +765,9 @@ fn table_block(
                                                 if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
                                                     for (section_idx, url) in &layout.link_sections {
                                                         if glyph.section_index == *section_idx {
-                                                            let _ = open::that(url);
+                                                            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
+                                        let _ = open::that(url);
+                                    }
                                                             break 'hit;
                                                         }
                                                     }
@@ -805,36 +816,16 @@ fn code_block(
 
     let copy_id = egui::Id::new(("code-copy", ui.next_auto_id()));
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        if let Some(lang) = language {
-            ui.label(
-                RichText::new(lang)
-                    .font(FontId::new(style.small_font_size, FontFamily::Monospace))
-                    .color(style.colors.muted_text),
-            );
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let copied_at: Option<std::time::Instant> =
-                ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
-            let is_copied = copied_at
-                .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
-                .unwrap_or(false);
-            let btn_label = if is_copied { "✓" } else { "copy" };
-            let btn = egui::Button::new(
-                RichText::new(btn_label)
-                    .size(11.0)
-                    .color(style.colors.muted_text),
-            )
-            .fill(egui::Color32::TRANSPARENT);
-            if ui.add(btn).clicked() && !is_copied {
-                ui.ctx().copy_text(code.to_owned());
-                ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
-            }
-        });
-    });
+    if let Some(lang) = language {
+        ui.label(
+            RichText::new(lang)
+                .font(FontId::new(style.small_font_size, FontFamily::Monospace))
+                .color(style.colors.muted_text),
+        );
+    }
     ui.add_space(2.0);
 
-    egui::Frame::new()
+    let frame_resp = egui::Frame::new()
         .fill(style.colors.code_background)
         .stroke(Stroke::new(1.0, style.colors.page_border))
         .corner_radius(8.0)
@@ -873,6 +864,33 @@ fn code_block(
                     );
                 });
         });
+
+    let frame_rect = frame_resp.response.rect;
+    if ui.rect_contains_pointer(frame_rect) {
+        let copied_at: Option<std::time::Instant> =
+            ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
+        let is_copied = copied_at
+            .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
+            .unwrap_or(false);
+        let btn_label = if is_copied { "✓" } else { "copy" };
+        let btn_size = egui::vec2(48.0, 20.0);
+        let btn_rect = egui::Rect::from_min_size(
+            egui::pos2(frame_rect.right() - btn_size.x - 8.0, frame_rect.top() + 6.0),
+            btn_size,
+        );
+        let btn = egui::Button::new(
+            RichText::new(btn_label)
+                .size(11.0)
+                .color(style.colors.muted_text),
+        )
+        .fill(style.colors.code_background)
+        .stroke(Stroke::new(1.0, style.colors.page_border));
+        if ui.put(btn_rect, btn).clicked() && !is_copied {
+            ui.ctx().copy_text(code.to_owned());
+            ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
+        }
+        ui.ctx().request_repaint();
+    }
 }
 
 fn render_paragraph_with_images(

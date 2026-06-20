@@ -282,6 +282,7 @@ pub struct NvmdApp {
     remembered_scroll: f32,
     restore_scroll: bool,
     heading_cursor: usize,
+    active_toc_index: Option<usize>,
     word_count: usize,
 }
 
@@ -351,6 +352,7 @@ impl NvmdApp {
                 remembered_scroll: 0.0,
                 restore_scroll: false,
                 heading_cursor: 0,
+                active_toc_index: None,
                 word_count: 0,
             };
 
@@ -406,6 +408,7 @@ impl NvmdApp {
             remembered_scroll: 0.0,
             restore_scroll: false,
             heading_cursor: 0,
+            active_toc_index: None,
             word_count: 0,
         }
     }
@@ -719,6 +722,7 @@ impl NvmdApp {
                                                 );
                                             } else if let Some(document) = &mut self.document {
                                                 let search_match = self.search.current_match();
+                                                let mut visible_heading_block: Option<usize> = None;
                                                 crate::document::render::render_document(
                                                     ui,
                                                     document,
@@ -728,7 +732,10 @@ impl NvmdApp {
                                                     self.highlighter.as_ref(),
                                                     &mut self.image_cache,
                                                     search_match,
+                                                    &mut visible_heading_block,
                                                 );
+                                                self.active_toc_index = visible_heading_block
+                                                    .and_then(|bi| self.toc_entries.iter().position(|e| e.block_index == bi));
                                             }
                                         },
                                     );
@@ -1388,7 +1395,7 @@ impl NvmdApp {
                     .show(ui, |ui| {
                         for (i, entry) in self.toc_entries.iter().enumerate() {
                             let indent = (entry.level.saturating_sub(1) as f32) * 12.0;
-                            let is_current = i == self.heading_cursor;
+                            let is_current = self.active_toc_index == Some(i);
                             ui.horizontal(|ui| {
                                 ui.add_space(indent);
                                 let size = if entry.level == 1 { 13.0 } else { 12.0 };
@@ -1507,6 +1514,9 @@ impl NvmdApp {
                 if let Some(doc) = &self.document {
                     let doc_clone = doc.clone();
                     self.search.update_matches(&doc_clone);
+                }
+                if let Some(block_index) = self.search.current_match() {
+                    self.navigation.request_source_block(block_index);
                 }
             }
             if go_next {
