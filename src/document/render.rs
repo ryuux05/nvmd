@@ -4,6 +4,7 @@ use eframe::egui::{
     vec2, Align, Color32, FontFamily, FontId, Label, Rect, RichText, Stroke,
 };
 
+use crate::app::ImageEntry;
 use crate::document::model::{plain_text, Block, Document, Inline};
 use crate::input::NavigationState;
 use crate::render::settings::MarkdownStyle;
@@ -14,6 +15,9 @@ pub fn render_document(
     render_mermaid: bool,
     style: &MarkdownStyle,
     navigation: &mut NavigationState,
+    highlighter: Option<&crate::highlight::Highlighter>,
+    image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
+    search_match: Option<usize>,
 ) {
     let mut mermaid_index = 0;
     let mermaid_count = count_mermaid_blocks(&document.blocks);
@@ -27,6 +31,7 @@ pub fn render_document(
             let selected_mermaid = matches!(block, Block::Mermaid { .. }).then_some(mermaid_index);
             navigation.apply_synced_block_mode(selected_mermaid);
         }
+        let is_search_match = search_match == Some(index);
         render_block(
             ui,
             block,
@@ -35,6 +40,9 @@ pub fn render_document(
             &mut mermaid_index,
             mermaid_count,
             navigation,
+            highlighter,
+            image_cache,
+            is_search_match,
         );
     }
 }
@@ -47,7 +55,35 @@ fn render_block(
     mermaid_index: &mut usize,
     mermaid_count: usize,
     navigation: &mut NavigationState,
+    highlighter: Option<&crate::highlight::Highlighter>,
+    image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
+    is_search_match: bool,
 ) {
+    if is_search_match {
+        let rect = ui.available_rect_before_wrap();
+        let highlight_color = if style.is_dark {
+            egui::Color32::from_rgba_unmultiplied(86, 162, 255, 20)
+        } else {
+            egui::Color32::from_rgba_unmultiplied(9, 105, 218, 15)
+        };
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x - 8.0, rect.min.y - 4.0),
+                egui::pos2(rect.max.x + 8.0, rect.min.y + 200.0),
+            ),
+            4.0,
+            highlight_color,
+        );
+        let bar_color = style.colors.link;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.min.x - 8.0, rect.min.y - 4.0),
+                egui::pos2(rect.min.x - 5.0, rect.min.y + 200.0),
+            ),
+            0.0,
+            bar_color,
+        );
+    }
     match block {
         Block::Heading { level, content, .. } => {
             let size = style.heading_sizes[usize::from((*level).saturating_sub(1)).min(5)];
@@ -65,17 +101,21 @@ fn render_block(
             }
         }
         Block::Paragraph { content } => {
-            inline_label(
-                ui,
-                content,
-                FontId::new(style.body_font_size, FontFamily::Proportional),
-                style.colors.text,
-                false,
-                style,
-            );
+            if content.iter().any(|i| matches!(i, Inline::Image { .. })) {
+                render_paragraph_with_images(ui, content, style, image_cache);
+            } else {
+                inline_label(
+                    ui,
+                    content,
+                    FontId::new(style.body_font_size, FontFamily::Proportional),
+                    style.colors.text,
+                    false,
+                    style,
+                );
+            }
         }
         Block::CodeBlock { language, code } => {
-            code_block(ui, language.as_deref(), code, None, style);
+            code_block(ui, language.as_deref(), code, None, style, highlighter);
         }
         Block::List {
             ordered,
@@ -83,14 +123,22 @@ fn render_block(
             items,
         } => {
             for (index, item) in items.iter().enumerate() {
-                let marker = if *ordered {
-                    format!("{}.", start.unwrap_or(1) + index as u64)
+                let (marker, marker_color) = if *ordered {
+                    (
+                        format!("{}.", start.unwrap_or(1) + index as u64),
+                        style.colors.muted_text,
+                    )
                 } else if item.checked == Some(true) {
-                    "[x]".to_owned()
+                    ("✓".to_owned(), style.colors.link)
                 } else if item.checked == Some(false) {
-                    "[ ]".to_owned()
+                    ("○".to_owned(), style.colors.muted_text)
                 } else {
-                    "-".to_owned()
+                    ("·".to_owned(), style.colors.muted_text)
+                };
+                let marker_font = if *ordered {
+                    FontFamily::Monospace
+                } else {
+                    FontFamily::Proportional
                 };
                 ui.horizontal_top(|ui| {
                     ui.set_min_height(style.list_item_min_height);
@@ -98,8 +146,8 @@ fn render_block(
                         vec2(style.list_marker_width, style.list_item_min_height),
                         Label::new(
                             RichText::new(marker)
-                                .font(FontId::new(style.body_font_size, FontFamily::Monospace))
-                                .color(style.colors.muted_text),
+                                .font(FontId::new(style.body_font_size, marker_font))
+                                .color(marker_color),
                         ),
                     );
                     let text_width = ui.available_width().max(1.0);
@@ -114,6 +162,9 @@ fn render_block(
                                 mermaid_index,
                                 mermaid_count,
                                 navigation,
+                                highlighter,
+                                image_cache,
+                                false,
                             );
                         }
                     });
@@ -121,9 +172,9 @@ fn render_block(
             }
         }
         Block::Quote { blocks } => {
-            egui::Frame::new()
-                .fill(style.colors.page_background)
-                .stroke(Stroke::new(4.0, style.colors.quote_border))
+            let frame_response = egui::Frame::new()
+                .fill(style.colors.quote_background)
+                .stroke(Stroke::NONE)
                 .inner_margin(egui::Margin::same(style.quote_margin))
                 .show(ui, |ui| {
                     ui.visuals_mut().override_text_color = Some(style.colors.quote_text);
@@ -136,10 +187,19 @@ fn render_block(
                             mermaid_index,
                             mermaid_count,
                             navigation,
+                            highlighter,
+                            image_cache,
+                            false,
                         );
                         ui.add_space(style.paragraph_gap * 0.5);
                     }
                 });
+            let rect = frame_response.response.rect;
+            ui.painter().rect_filled(
+                Rect::from_min_max(rect.min, pos2(rect.min.x + 3.0, rect.max.y)),
+                0.0,
+                style.colors.quote_border,
+            );
         }
         Block::HorizontalRule => {
             ui.add_space(8.0);
@@ -147,7 +207,7 @@ fn render_block(
             ui.add_space(8.0);
         }
         Block::HtmlBlock { html } => {
-            code_block(ui, Some("html"), html, Some("Raw HTML block"), style);
+            code_block(ui, Some("html"), html, Some("Raw HTML block"), style, None);
         }
         Block::Table {
             alignments: _,
@@ -171,6 +231,9 @@ fn render_block(
                     mermaid_index,
                     mermaid_count,
                     navigation,
+                    highlighter,
+                    image_cache,
+                    false,
                 );
             }
         }
@@ -193,6 +256,9 @@ fn render_block(
                                 mermaid_index,
                                 mermaid_count,
                                 navigation,
+                                highlighter,
+                                image_cache,
+                                false,
                             );
                         }
                     });
@@ -206,6 +272,7 @@ fn render_block(
                 expression,
                 Some("Math rendering is not implemented"),
                 style,
+                None,
             );
         }
         Block::Mermaid {
@@ -230,6 +297,7 @@ fn render_block(
                     source,
                     Some("Mermaid rendering disabled by --no-mermaid"),
                     style,
+                    None,
                 );
             }
         }
@@ -269,6 +337,7 @@ struct InlineStyle {
 struct InlineLayout {
     job: LayoutJob,
     code_sections: Vec<u32>,
+    link_sections: Vec<(u32, String)>,
 }
 
 fn inline_label(
@@ -289,7 +358,13 @@ fn inline_label(
         line_height,
         markdown,
     );
-    let (position, galley, _) = Label::new(layout.job).wrap().layout_in_ui(ui);
+    let has_links = !layout.link_sections.is_empty();
+    let sense = if has_links {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (position, galley, response) = Label::new(layout.job).sense(sense).wrap().layout_in_ui(ui);
     paint_inline_code_backgrounds(
         ui,
         position,
@@ -297,7 +372,28 @@ fn inline_label(
         &layout.code_sections,
         markdown.colors.inline_code_background,
     );
-    ui.painter().galley(position, galley, color);
+    ui.painter().galley(position, galley.clone(), color);
+
+    if has_links && response.clicked() {
+        if let Some(cursor_pos) = ui.ctx().pointer_interact_pos() {
+            let local = cursor_pos - position.to_vec2();
+            'hit: for row in &galley.rows {
+                if local.y >= row.rect.min.y && local.y <= row.rect.max.y {
+                    for glyph in &row.glyphs {
+                        if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
+                            for (section_idx, url) in &layout.link_sections {
+                                if glyph.section_index == *section_idx {
+                                    let _ = open::that(url);
+                                    break 'hit;
+                                }
+                            }
+                            break 'hit;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 fn inline_layout(
@@ -311,11 +407,13 @@ fn inline_layout(
 ) -> InlineLayout {
     let mut job = LayoutJob::default();
     let mut code_sections = Vec::new();
+    let mut link_sections = Vec::new();
     job.wrap.max_width = wrap_width.max(1.0);
     job.break_on_newline = true;
     append_inlines(
         &mut job,
         &mut code_sections,
+        &mut link_sections,
         inlines,
         font_id,
         color,
@@ -328,12 +426,13 @@ fn inline_layout(
         line_height,
         markdown,
     );
-    InlineLayout { job, code_sections }
+    InlineLayout { job, code_sections, link_sections }
 }
 
 fn append_inlines(
     job: &mut LayoutJob,
     code_sections: &mut Vec<u32>,
+    link_sections: &mut Vec<(u32, String)>,
     inlines: &[Inline],
     font_id: FontId,
     color: Color32,
@@ -356,6 +455,7 @@ fn append_inlines(
             Inline::Emphasis(children) => append_inlines(
                 job,
                 code_sections,
+                link_sections,
                 children,
                 font_id.clone(),
                 color,
@@ -369,6 +469,7 @@ fn append_inlines(
             Inline::Strong(children) => append_inlines(
                 job,
                 code_sections,
+                link_sections,
                 children,
                 font_id.clone(),
                 color,
@@ -382,6 +483,7 @@ fn append_inlines(
             Inline::Strikethrough(children) => append_inlines(
                 job,
                 code_sections,
+                link_sections,
                 children,
                 font_id.clone(),
                 color,
@@ -405,16 +507,23 @@ fn append_inlines(
                 line_height,
                 markdown,
             ),
-            Inline::Link { children, .. } => append_inlines(
-                job,
-                code_sections,
-                children,
-                font_id.clone(),
-                markdown.colors.link,
-                style,
-                line_height,
-                markdown,
-            ),
+            Inline::Link { destination, children, .. } => {
+                let section_before = job.sections.len() as u32;
+                append_inlines(
+                    job,
+                    code_sections,
+                    link_sections,
+                    children,
+                    font_id.clone(),
+                    markdown.colors.link,
+                    style,
+                    line_height,
+                    markdown,
+                );
+                for i in section_before..job.sections.len() as u32 {
+                    link_sections.push((i, destination.clone()));
+                }
+            }
             Inline::Image { alt, .. } => {
                 append_inline_text(
                     job,
@@ -429,6 +538,7 @@ fn append_inlines(
                 append_inlines(
                     job,
                     code_sections,
+                    link_sections,
                     alt,
                     font_id.clone(),
                     color,
@@ -605,6 +715,7 @@ fn code_block(
     code: &str,
     message: Option<&str>,
     style: &MarkdownStyle,
+    highlighter: Option<&crate::highlight::Highlighter>,
 ) {
     if let Some(message) = message {
         ui.add(
@@ -616,23 +727,67 @@ fn code_block(
             .wrap(),
         );
     }
-    if let Some(language) = language {
-        ui.add_space(2.0);
-        ui.label(
-            RichText::new(language.to_ascii_uppercase())
-                .font(FontId::new(style.small_font_size, FontFamily::Monospace))
-                .color(style.colors.muted_text),
-        );
-    }
+
+    let copy_id = egui::Id::new(("code-copy", ui.next_auto_id()));
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        if let Some(lang) = language {
+            ui.label(
+                RichText::new(lang)
+                    .font(FontId::new(style.small_font_size, FontFamily::Monospace))
+                    .color(style.colors.muted_text),
+            );
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let copied_at: Option<std::time::Instant> =
+                ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
+            let is_copied = copied_at
+                .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
+                .unwrap_or(false);
+            let btn_label = if is_copied { "✓" } else { "copy" };
+            let btn = egui::Button::new(
+                RichText::new(btn_label)
+                    .size(11.0)
+                    .color(style.colors.muted_text),
+            )
+            .fill(egui::Color32::TRANSPARENT);
+            if ui.add(btn).clicked() && !is_copied {
+                ui.ctx().copy_text(code.to_owned());
+                ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
+            }
+        });
+    });
+    ui.add_space(2.0);
+
     egui::Frame::new()
         .fill(style.colors.code_background)
-        .stroke(Stroke::NONE)
-        .corner_radius(6.0)
+        .stroke(Stroke::new(1.0, style.colors.page_border))
+        .corner_radius(8.0)
         .inner_margin(egui::Margin::same(style.code_margin))
         .show(ui, |ui| {
             egui::ScrollArea::horizontal()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
+                    if let (Some(lang), Some(hl)) = (language, highlighter) {
+                        let spans = hl.highlight(code, lang, style.is_dark);
+                        if !spans.is_empty() {
+                            let line_height = style.code_font_size * style.line_height;
+                            let font_id =
+                                FontId::new(style.code_font_size, FontFamily::Monospace);
+                            let mut job = eframe::egui::text::LayoutJob::default();
+                            job.wrap.max_width = f32::INFINITY;
+                            for (color, text) in spans {
+                                let mut fmt = eframe::egui::text::TextFormat::simple(
+                                    font_id.clone(),
+                                    color,
+                                );
+                                fmt.line_height = Some(line_height);
+                                job.append(&text, 0.0, fmt);
+                            }
+                            ui.add(Label::new(job).selectable(true));
+                            return;
+                        }
+                    }
                     ui.add(
                         Label::new(
                             RichText::new(code)
@@ -643,6 +798,85 @@ fn code_block(
                     );
                 });
         });
+}
+
+fn render_paragraph_with_images(
+    ui: &mut egui::Ui,
+    content: &[Inline],
+    style: &MarkdownStyle,
+    image_cache: &mut std::collections::HashMap<String, ImageEntry>,
+) {
+    for inline in content {
+        match inline {
+            Inline::Image { destination, alt, .. } => {
+                match image_cache.get(destination) {
+                    Some(ImageEntry::Loaded(img)) => {
+                        let texture = ui.ctx().load_texture(
+                            destination.as_str(),
+                            img.clone(),
+                            egui::TextureOptions::LINEAR,
+                        );
+                        let max_width = ui.available_width();
+                        let orig = texture.size_vec2();
+                        let display_size = if orig.x > max_width {
+                            egui::vec2(max_width, orig.y * (max_width / orig.x))
+                        } else {
+                            orig
+                        };
+                        ui.image((texture.id(), display_size));
+                        let alt_text = plain_text(alt);
+                        if !alt_text.is_empty() {
+                            ui.label(
+                                RichText::new(alt_text)
+                                    .size(style.small_font_size)
+                                    .color(style.colors.muted_text)
+                                    .italics(),
+                            );
+                        }
+                    }
+                    Some(ImageEntry::Failed(err)) => {
+                        let alt_text = plain_text(alt);
+                        let display = if alt_text.is_empty() {
+                            format!("[image failed: {err}]")
+                        } else {
+                            format!("[{alt_text}]")
+                        };
+                        ui.label(
+                            RichText::new(display)
+                                .size(style.body_font_size)
+                                .color(style.colors.warning_text),
+                        );
+                    }
+                    Some(ImageEntry::Loading) => {
+                        let alt_text = plain_text(alt);
+                        let display = if alt_text.is_empty() {
+                            "[loading image…]".to_owned()
+                        } else {
+                            format!("[loading: {alt_text}]")
+                        };
+                        ui.label(
+                            RichText::new(display)
+                                .size(style.body_font_size)
+                                .color(style.colors.muted_text),
+                        );
+                    }
+                    None => {
+                        image_cache.insert(destination.clone(), ImageEntry::Loading);
+                    }
+                }
+            }
+            _ => {
+                inline_label(
+                    ui,
+                    std::slice::from_ref(inline),
+                    FontId::new(style.body_font_size, FontFamily::Proportional),
+                    style.colors.text,
+                    false,
+                    style,
+                );
+            }
+        }
+    }
 }
 
 fn block_top_gap(block: &Block, style: &MarkdownStyle) -> f32 {

@@ -19,7 +19,11 @@ pub fn configure(ctx: &eframe::egui::Context, markdown: &MarkdownStyle) {
     configure_fonts(ctx);
 
     let mut style = (*ctx.style()).clone();
-    style.visuals = Visuals::dark();
+    style.visuals = if markdown.is_dark {
+        Visuals::dark()
+    } else {
+        Visuals::light()
+    };
     style.scroll_animation = ScrollAnimation::new(720.0, Rangef::new(0.16, 0.42));
     style.spacing.item_spacing = eframe::egui::vec2(8.0, 6.0);
     style.spacing.button_padding = eframe::egui::vec2(10.0, 6.0);
@@ -40,7 +44,19 @@ pub fn configure(ctx: &eframe::egui::Context, markdown: &MarkdownStyle) {
     style.visuals.extreme_bg_color = markdown.colors.code_background;
     style.visuals.widgets.noninteractive.bg_fill = markdown.colors.page_background;
     style.visuals.widgets.inactive.bg_fill = markdown.colors.code_background;
-    style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(33, 38, 45);
+    if markdown.is_dark {
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(20, 28, 48);
+        style.visuals.widgets.active.bg_fill = Color32::from_rgb(26, 36, 62);
+        style.visuals.selection.bg_fill = Color32::from_rgb(30, 60, 120);
+    } else {
+        style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(220, 228, 240);
+        style.visuals.widgets.active.bg_fill = Color32::from_rgb(200, 215, 235);
+        style.visuals.selection.bg_fill = Color32::from_rgb(180, 210, 255);
+    }
+    style.visuals.hyperlink_color = markdown.colors.link;
+    style.visuals.widgets.noninteractive.fg_stroke.color = markdown.colors.muted_text;
+    style.visuals.widgets.inactive.fg_stroke.color = markdown.colors.text;
+    style.visuals.override_text_color = Some(markdown.colors.text);
     ctx.set_style(style);
 }
 

@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod document;
+mod highlight;
 mod input;
 mod mermaid;
 mod render;

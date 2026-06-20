@@ -65,13 +65,13 @@ pub fn render_block(
             }
 
             let response = egui::Frame::new()
-                .fill(Color32::from_rgb(252, 253, 254))
+                .fill(Color32::from_rgb(250, 252, 255))
                 .stroke(Stroke::new(
                     if keyboard_active { 2.0 } else { 1.0 },
                     if keyboard_active {
-                        Color32::from_rgb(80, 135, 190)
+                        Color32::from_rgb(86, 162, 255)
                     } else {
-                        Color32::from_rgb(220, 226, 233)
+                        Color32::from_rgb(26, 38, 68)
                     },
                 ))
                 .inner_margin(egui::Margin::same(DIAGRAM_MARGIN as i8))
@@ -103,7 +103,7 @@ pub fn render_block(
                     }
 
                     ui.painter()
-                        .rect_filled(viewport_rect, 5.0, Color32::from_rgb(247, 249, 251));
+                        .rect_filled(viewport_rect, 5.0, Color32::from_rgb(244, 248, 255));
                     let image_size = fit_size * state.zoom;
                     let image_rect = Rect::from_min_size(viewport_rect.min + state.pan, image_size);
                     ui.painter_at(viewport_rect).image(
@@ -167,50 +167,56 @@ fn toolbar(
     diagram_index: usize,
     diagram_count: usize,
 ) {
+    let accent = Color32::from_rgb(86, 162, 255);
+    let muted = Color32::from_rgb(84, 104, 136);
+    let hint = Color32::from_rgb(60, 80, 110);
+
     ui.horizontal(|ui| {
+        let label_color = if active { accent } else { muted };
+        let label_text = if active { "diagram  active" } else { "diagram" };
         ui.label(
-            RichText::new(if active { "MERMAID ACTIVE" } else { "MERMAID" })
-                .font(FontId::new(12.0, FontFamily::Monospace))
-                .color(Color32::from_rgb(96, 111, 129)),
+            RichText::new(label_text)
+                .font(FontId::new(11.0, FontFamily::Monospace))
+                .color(label_color),
         );
-        ui.add_space(10.0);
-        if ui.small_button("Fit").clicked() {
+        ui.add_space(8.0);
+        if ui.small_button("fit").clicked() {
             fit_viewport(state);
         }
-        if ui.small_button("-").clicked() {
+        if ui.small_button("−").clicked() {
             zoom(state, -ZOOM_STEP);
         }
         ui.label(
             RichText::new(format!("{:.0}%", state.zoom * 100.0))
-                .font(FontId::new(12.0, FontFamily::Monospace))
-                .color(Color32::from_rgb(70, 82, 95)),
+                .font(FontId::new(11.0, FontFamily::Monospace))
+                .color(muted),
         );
         if ui.small_button("+").clicked() {
             zoom(state, ZOOM_STEP);
         }
-        ui.add_space(10.0);
+        ui.add_space(8.0);
         ui.label(
             RichText::new(if expanded {
                 format!(
-                    "{} of {} | f fit | Enter enlarge | Esc close | h j k l pan | [ ] zoom",
+                    "{}/{} · f fit · Enter enlarge · Esc close · hjkl pan · [/] zoom",
                     diagram_index + 1,
                     diagram_count.max(1)
                 )
             } else if active {
                 format!(
-                    "{} of {} | f fit | Enter large view | Esc exit | h j k l pan | [ ] zoom",
+                    "{}/{} · f fit · Enter expand · Esc deselect · hjkl pan · [/] zoom",
                     diagram_index + 1,
                     diagram_count.max(1)
                 )
             } else {
                 format!(
-                    "{} of {} | Space j/k select | : commands",
+                    "{}/{} · Space j/k select · : commands",
                     diagram_index + 1,
                     diagram_count.max(1)
                 )
             })
-            .size(12.0)
-            .color(Color32::from_rgb(96, 111, 129)),
+            .size(11.0)
+            .color(hint),
         );
     });
 }
@@ -240,8 +246,8 @@ fn render_expanded_window(
         .max_size(max_size)
         .frame(
             egui::Frame::new()
-                .fill(Color32::from_rgb(252, 253, 254))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(190, 202, 215)))
+                .fill(Color32::from_rgb(250, 252, 255))
+                .stroke(Stroke::new(1.0, Color32::from_rgb(86, 162, 255)))
                 .inner_margin(egui::Margin::same(DIAGRAM_MARGIN as i8)),
         )
         .show(ctx, |ui| {
@@ -263,7 +269,7 @@ fn render_expanded_window(
             let origin = expanded_canvas_origin(viewport_size, image_size, state.fit_to_viewport);
             state.pan = clamp_canvas_pan(state.pan, viewport_size, image_size, origin);
             ui.painter()
-                .rect_filled(viewport_rect, 5.0, Color32::from_rgb(247, 249, 251));
+                .rect_filled(viewport_rect, 5.0, Color32::from_rgb(244, 248, 255));
             ui.painter_at(viewport_rect).image(
                 texture.id(),
                 Rect::from_min_size(viewport_rect.min + origin + state.pan, image_size),
@@ -421,20 +427,22 @@ fn source_block(ui: &mut egui::Ui, source: &str, message: Option<&str>) {
             Label::new(
                 RichText::new(message)
                     .size(14.0)
-                    .color(Color32::from_rgb(156, 75, 45)),
+                    .color(Color32::from_rgb(176, 132, 255)),
             )
             .wrap(),
         );
     }
-    ui.add_space(2.0);
+    ui.add_space(4.0);
     ui.label(
-        RichText::new("MERMAID")
-            .font(FontId::new(12.0, FontFamily::Monospace))
-            .color(Color32::from_rgb(96, 111, 129)),
+        RichText::new("mermaid")
+            .font(FontId::new(11.0, FontFamily::Monospace))
+            .color(Color32::from_rgb(84, 104, 136)),
     );
+    ui.add_space(2.0);
     egui::Frame::new()
-        .fill(Color32::from_rgb(247, 249, 251))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(220, 226, 233)))
+        .fill(Color32::from_rgb(8, 11, 20))
+        .stroke(Stroke::new(1.0, Color32::from_rgb(28, 40, 70)))
+        .corner_radius(8.0)
         .inner_margin(egui::Margin::same(14))
         .show(ui, |ui| {
             egui::ScrollArea::horizontal()
@@ -443,8 +451,8 @@ fn source_block(ui: &mut egui::Ui, source: &str, message: Option<&str>) {
                     ui.add(
                         Label::new(
                             RichText::new(source)
-                                .font(FontId::new(14.0, FontFamily::Monospace))
-                                .color(Color32::from_rgb(35, 43, 53)),
+                                .font(FontId::new(13.0, FontFamily::Monospace))
+                                .color(Color32::from_rgb(194, 208, 232)),
                         )
                         .selectable(true),
                     );

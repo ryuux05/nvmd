@@ -24,12 +24,16 @@ pub struct ViewerSettings {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum MarkdownPreset {
-    GitHub,
+    Dark,
+    Light,
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Debug, Clone)]
 pub struct MarkdownStyle {
     pub colors: MarkdownColors,
+    pub is_dark: bool,
     pub body_font_size: f32,
     pub code_font_size: f32,
     pub small_font_size: f32,
@@ -60,6 +64,7 @@ pub struct MarkdownColors {
     pub inline_code_background: Color32,
     pub quote_text: Color32,
     pub quote_border: Color32,
+    pub quote_background: Color32,
     pub table_stripe: Color32,
     pub warning_text: Color32,
     pub warning_background: Color32,
@@ -70,9 +75,9 @@ pub struct MarkdownColors {
 
 impl Default for ViewerSettings {
     fn default() -> Self {
-        let style = MarkdownStyle::github();
+        let style = MarkdownStyle::dark();
         Self {
-            preset: MarkdownPreset::GitHub,
+            preset: MarkdownPreset::Dark,
             page_max_width: style.page_max_width,
             page_inner_margin: style.page_inner_margin,
             body_font_size: style.body_font_size,
@@ -91,7 +96,7 @@ impl Default for ViewerSettings {
 
 impl Default for MarkdownPreset {
     fn default() -> Self {
-        Self::GitHub
+        Self::Dark
     }
 }
 
@@ -119,7 +124,8 @@ impl ViewerSettings {
 
     pub fn style(&self) -> MarkdownStyle {
         let mut style = match self.preset {
-            MarkdownPreset::GitHub => MarkdownStyle::github(),
+            MarkdownPreset::Light => MarkdownStyle::light(),
+            _ => MarkdownStyle::dark(),
         };
         style.page_max_width = self.page_max_width.clamp(360.0, 1600.0);
         style.page_inner_margin = self.page_inner_margin.clamp(0.0, 96.0);
@@ -149,29 +155,72 @@ fn clamped_margin(value: f32) -> i8 {
 }
 
 impl MarkdownStyle {
-    pub fn github() -> Self {
+    pub fn dark() -> Self {
         Self {
             colors: MarkdownColors {
-                app_background: Color32::from_rgb(13, 17, 23),
-                page_background: Color32::from_rgb(13, 17, 23),
-                page_border: Color32::from_rgb(48, 54, 61),
-                text: Color32::from_rgb(230, 237, 243),
-                strong_text: Color32::from_rgb(230, 237, 243),
-                muted_text: Color32::from_rgb(125, 133, 144),
-                link: Color32::from_rgb(47, 129, 247),
-                rule: Color32::from_rgb(48, 54, 61),
-                code_text: Color32::from_rgb(230, 237, 243),
-                code_background: Color32::from_rgb(22, 27, 34),
-                inline_code_background: Color32::from_rgba_unmultiplied(110, 118, 129, 102),
-                quote_text: Color32::from_rgb(125, 133, 144),
-                quote_border: Color32::from_rgb(48, 54, 61),
-                table_stripe: Color32::from_rgb(22, 27, 34),
-                warning_text: Color32::from_rgb(210, 168, 255),
-                warning_background: Color32::from_rgb(22, 27, 34),
-                warning_border: Color32::from_rgb(48, 54, 61),
-                chrome_background: Color32::from_rgb(1, 4, 9),
-                chrome_border: Color32::from_rgb(48, 54, 61),
+                app_background: Color32::from_rgb(10, 14, 22),
+                page_background: Color32::from_rgb(13, 18, 32),
+                page_border: Color32::from_rgb(28, 40, 70),
+                text: Color32::from_rgb(194, 208, 232),
+                strong_text: Color32::from_rgb(222, 234, 255),
+                muted_text: Color32::from_rgb(84, 104, 136),
+                link: Color32::from_rgb(86, 162, 255),
+                rule: Color32::from_rgb(24, 36, 62),
+                code_text: Color32::from_rgb(194, 208, 232),
+                code_background: Color32::from_rgb(8, 11, 20),
+                inline_code_background: Color32::from_rgba_unmultiplied(70, 108, 180, 52),
+                quote_text: Color32::from_rgb(140, 164, 200),
+                quote_border: Color32::from_rgb(68, 104, 200),
+                quote_background: Color32::from_rgb(13, 20, 38),
+                table_stripe: Color32::from_rgb(11, 16, 28),
+                warning_text: Color32::from_rgb(176, 132, 255),
+                warning_background: Color32::from_rgb(16, 12, 30),
+                warning_border: Color32::from_rgb(52, 36, 90),
+                chrome_background: Color32::from_rgb(8, 9, 15),
+                chrome_border: Color32::from_rgb(22, 30, 50),
             },
+            is_dark: true,
+            body_font_size: 16.0,
+            code_font_size: 13.6,
+            small_font_size: 12.0,
+            heading_sizes: [32.0, 24.0, 20.0, 16.0, 14.0, 13.6],
+            page_max_width: 1012.0,
+            page_inner_margin: 32.0,
+            line_height: 1.5,
+            paragraph_gap: 16.0,
+            list_marker_width: 32.0,
+            list_item_min_height: 24.0,
+            code_margin: 16,
+            quote_margin: 12,
+            table_spacing: eframe::egui::vec2(18.0, 10.0),
+        }
+    }
+
+    pub fn light() -> Self {
+        Self {
+            colors: MarkdownColors {
+                app_background: Color32::from_rgb(246, 248, 250),
+                page_background: Color32::from_rgb(255, 255, 255),
+                page_border: Color32::from_rgb(208, 215, 222),
+                text: Color32::from_rgb(36, 41, 47),
+                strong_text: Color32::from_rgb(24, 28, 33),
+                muted_text: Color32::from_rgb(101, 109, 118),
+                link: Color32::from_rgb(9, 105, 218),
+                rule: Color32::from_rgb(208, 215, 222),
+                code_text: Color32::from_rgb(36, 41, 47),
+                code_background: Color32::from_rgb(240, 242, 244),
+                inline_code_background: Color32::from_rgba_unmultiplied(175, 184, 193, 60),
+                quote_text: Color32::from_rgb(87, 96, 106),
+                quote_border: Color32::from_rgb(9, 105, 218),
+                quote_background: Color32::from_rgb(237, 246, 255),
+                table_stripe: Color32::from_rgb(240, 242, 244),
+                warning_text: Color32::from_rgb(104, 60, 180),
+                warning_background: Color32::from_rgb(246, 240, 255),
+                warning_border: Color32::from_rgb(200, 170, 240),
+                chrome_background: Color32::from_rgb(240, 242, 244),
+                chrome_border: Color32::from_rgb(208, 215, 222),
+            },
+            is_dark: false,
             body_font_size: 16.0,
             code_font_size: 13.6,
             small_font_size: 12.0,
@@ -198,8 +247,8 @@ mod tests {
     use super::{MarkdownPreset, ViewerSettings};
 
     #[test]
-    fn defaults_to_github_preset() {
-        assert_eq!(ViewerSettings::default().preset, MarkdownPreset::GitHub);
+    fn defaults_to_dark_preset() {
+        assert_eq!(ViewerSettings::default().preset, MarkdownPreset::Dark);
     }
 
     #[test]

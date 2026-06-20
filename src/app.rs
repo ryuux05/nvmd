@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{self, Receiver};
 use std::time::{Duration, Instant};
 
@@ -7,14 +7,102 @@ use eframe::egui;
 use crate::config::Config;
 use crate::document::{
     loader,
-    model::{Block, Document},
+    model::{plain_text, Block, Document},
     parser,
 };
+use crate::highlight::Highlighter;
 use crate::input::{DocumentJump, InputAction, MermaidViewportCommand, NavigationState};
 use crate::mermaid::{cache::MermaidCache, renderer::MermaidRenderer};
 use crate::render::{self, settings::ViewerSettings};
 use crate::sync::CursorSync;
 use crate::watcher::FileWatcher;
+
+#[derive(Debug, Clone)]
+struct TocEntry {
+    block_index: usize,
+    level: u8,
+    text: String,
+}
+
+#[derive(Debug, Default)]
+struct SearchState {
+    active: bool,
+    query: String,
+    matches: Vec<usize>,
+    selected: usize,
+    request_focus: bool,
+}
+
+impl SearchState {
+    fn open(&mut self) {
+        self.active = true;
+        self.request_focus = true;
+    }
+
+    fn close(&mut self) {
+        self.active = false;
+        self.query.clear();
+        self.matches.clear();
+        self.selected = 0;
+    }
+
+    fn update_matches(&mut self, document: &Document) {
+        self.matches.clear();
+        self.selected = 0;
+        if self.query.is_empty() {
+            return;
+        }
+        let q = self.query.to_lowercase();
+        for (index, block) in document.blocks.iter().enumerate() {
+            if block_contains_query(block, &q) {
+                self.matches.push(index);
+            }
+        }
+    }
+
+    fn current_match(&self) -> Option<usize> {
+        self.matches.get(self.selected).copied()
+    }
+
+    fn next(&mut self) {
+        if !self.matches.is_empty() {
+            self.selected = (self.selected + 1) % self.matches.len();
+        }
+    }
+
+    fn prev(&mut self) {
+        if !self.matches.is_empty() {
+            self.selected = (self.selected + self.matches.len() - 1) % self.matches.len();
+        }
+    }
+}
+
+fn block_contains_query(block: &Block, query: &str) -> bool {
+    match block {
+        Block::Heading { content, .. } | Block::Paragraph { content } => {
+            plain_text(content).to_lowercase().contains(query)
+        }
+        Block::CodeBlock { code, .. } => code.to_lowercase().contains(query),
+        Block::List { items, .. } => items.iter().any(|item| {
+            item.blocks
+                .iter()
+                .any(|b| block_contains_query(b, query))
+        }),
+        Block::Quote { blocks } => blocks.iter().any(|b| block_contains_query(b, query)),
+        _ => false,
+    }
+}
+
+pub enum ImageEntry {
+    Loading,
+    Loaded(egui::ColorImage),
+    Failed(String),
+}
+
+struct ImageJobResult {
+    path: String,
+    result: Result<egui::ColorImage, String>,
+}
 
 const RELOAD_DEBOUNCE: Duration = Duration::from_millis(200);
 const CURSOR_SYNC_POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -58,6 +146,9 @@ enum PaletteCommand {
     Fit,
     ZoomIn,
     ZoomOut,
+    Toc,
+    Search,
+    ToggleTheme,
     Quit,
 }
 
@@ -125,6 +216,21 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         command: PaletteCommand::ZoomOut,
     },
     PaletteEntry {
+        name: "toc",
+        description: "toggle the table of contents sidebar",
+        command: PaletteCommand::Toc,
+    },
+    PaletteEntry {
+        name: "search",
+        description: "search within the document",
+        command: PaletteCommand::Search,
+    },
+    PaletteEntry {
+        name: "theme",
+        description: "toggle between dark and light theme",
+        command: PaletteCommand::ToggleTheme,
+    },
+    PaletteEntry {
         name: "q",
         description: "close the viewer window",
         command: PaletteCommand::Quit,
@@ -156,13 +262,21 @@ pub struct NvmdApp {
     mermaid_jobs: HashSet<String>,
     mermaid_results: Receiver<MermaidJobResult>,
     mermaid_sender: mpsc::Sender<MermaidJobResult>,
+    render_generation: u64,
+    highlighter: Option<Highlighter>,
     settings: ViewerSettings,
     show_settings: bool,
     settings_error: Option<String>,
     navigation: NavigationState,
     palette: CommandPalette,
     show_help: bool,
+    show_toc: bool,
     cursor_sync: CursorSync,
+    toc_entries: Vec<TocEntry>,
+    search: SearchState,
+    image_cache: std::collections::HashMap<String, ImageEntry>,
+    image_results: Receiver<ImageJobResult>,
+    image_sender: mpsc::Sender<ImageJobResult>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,8 +286,11 @@ pub struct AppOptions {
     pub content_file: Option<std::path::PathBuf>,
 }
 
+const MAX_CONCURRENT_MERMAID_JOBS: usize = 4;
+
 struct MermaidJobResult {
     key: String,
+    generation: u64,
     result: Result<egui::ColorImage, String>,
 }
 
@@ -193,7 +310,9 @@ impl NvmdApp {
             let watcher_result = FileWatcher::watch(reload_path);
             let watcher_error = watcher_result.as_ref().err().map(|err| err.to_string());
             let (mermaid_sender, mermaid_results) = mpsc::channel();
+            let (image_sender, image_results) = mpsc::channel();
             let cursor_sync = CursorSync::new(options.cursor_file.clone());
+            let highlighter = Highlighter::new().ok();
             let mut app = Self {
                 watcher: watcher_result.ok(),
                 watcher_error,
@@ -206,13 +325,21 @@ impl NvmdApp {
                 mermaid_jobs: HashSet::new(),
                 mermaid_results,
                 mermaid_sender,
+                render_generation: 0,
+                highlighter,
                 settings,
                 show_settings: false,
                 settings_error: None,
                 navigation: NavigationState::default(),
                 palette: CommandPalette::default(),
                 show_help: false,
+                show_toc: false,
                 cursor_sync,
+                toc_entries: Vec::new(),
+                search: SearchState::default(),
+                image_cache: HashMap::new(),
+                image_results,
+                image_sender,
             };
 
             if app.watcher.is_none() {
@@ -231,6 +358,7 @@ impl NvmdApp {
 
     pub fn from_startup_error(message: String) -> Self {
         let (mermaid_sender, mermaid_results) = mpsc::channel();
+        let (image_sender, image_results) = mpsc::channel();
         Self {
             config: Config::fallback(),
             options: AppOptions {
@@ -247,27 +375,42 @@ impl NvmdApp {
             mermaid_jobs: HashSet::new(),
             mermaid_results,
             mermaid_sender,
+            render_generation: 0,
+            highlighter: None,
             settings: ViewerSettings::default(),
             show_settings: false,
             settings_error: None,
             navigation: NavigationState::default(),
             palette: CommandPalette::default(),
             show_help: false,
+            show_toc: false,
             cursor_sync: CursorSync::default(),
+            toc_entries: Vec::new(),
+            search: SearchState::default(),
+            image_cache: HashMap::new(),
+            image_results,
+            image_sender,
         }
     }
 
     fn reload(&mut self) {
+        self.render_generation = self.render_generation.wrapping_add(1);
+        self.mermaid_jobs.clear();
+        self.image_cache.clear();
         match loader::load_markdown(reload_path(&self.config, &self.options)) {
             Ok(source) => {
                 let mut document = parser::parse_markdown(&source);
                 document.source_path = Some(self.config.markdown_path.clone());
+                self.toc_entries = extract_toc(&document);
+                if self.search.active {
+                    self.search.update_matches(&document);
+                }
                 self.document = Some(document);
                 self.error = None;
-                self.mermaid_jobs.clear();
             }
             Err(err) => {
                 self.document = None;
+                self.toc_entries.clear();
                 self.error = Some(err.to_string());
             }
         }
@@ -330,16 +473,17 @@ fn settings_section(ui: &mut egui::Ui, title: &str, add_contents: impl FnOnce(&m
     ui.add_space(10.0);
     let outer_width = ui.available_width();
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(13, 17, 23))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 54, 61)))
+        .fill(egui::Color32::from_rgb(10, 14, 22))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(28, 40, 70)))
         .corner_radius(8.0)
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
             ui.set_width((outer_width - 24.0).max(1.0));
             ui.label(
                 egui::RichText::new(title)
+                    .size(12.0)
                     .strong()
-                    .color(egui::Color32::from_rgb(230, 237, 243)),
+                    .color(egui::Color32::from_rgb(84, 104, 136)),
             );
             ui.add_space(8.0);
             add_contents(ui);
@@ -356,7 +500,7 @@ fn settings_slider(
         ui.label(
             egui::RichText::new(label)
                 .size(13.0)
-                .color(egui::Color32::from_rgb(125, 133, 144)),
+                .color(egui::Color32::from_rgb(140, 164, 200)),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add(
@@ -380,15 +524,15 @@ fn settings_slider(
 
 fn keycap(ui: &mut egui::Ui, text: &str) {
     egui::Frame::new()
-        .fill(egui::Color32::from_rgb(33, 38, 45))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(48, 54, 61)))
+        .fill(egui::Color32::from_rgb(18, 26, 44))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(36, 52, 88)))
         .corner_radius(5.0)
         .inner_margin(egui::Margin::symmetric(6, 2))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(text)
-                    .size(12.0)
-                    .color(egui::Color32::from_rgb(230, 237, 243)),
+                    .size(11.0)
+                    .color(egui::Color32::from_rgb(194, 208, 232)),
             );
         });
 }
@@ -410,7 +554,9 @@ impl NvmdApp {
         self.handle_watcher(ctx);
         self.handle_cursor_sync(ctx);
         self.collect_mermaid_results();
+        self.collect_image_results();
         self.start_mermaid_jobs(ctx);
+        self.start_image_jobs(ctx);
         let mut markdown_style = self.settings.style();
 
         egui::TopBottomPanel::top("header")
@@ -418,21 +564,25 @@ impl NvmdApp {
                 egui::Frame::new()
                     .fill(markdown_style.colors.chrome_background)
                     .stroke(egui::Stroke::new(1.0, markdown_style.colors.chrome_border))
-                    .inner_margin(egui::Margin::symmetric(18, 10)),
+                    .inner_margin(egui::Margin::symmetric(18, 11)),
             )
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new(self.config.file_name())
-                            .size(15.0)
+                            .size(14.0)
                             .strong()
                             .color(markdown_style.colors.strong_text),
                     );
-                    ui.separator();
+                    ui.label(
+                        egui::RichText::new("·")
+                            .size(14.0)
+                            .color(markdown_style.colors.muted_text),
+                    );
                     ui.add(
                         egui::Label::new(
                             egui::RichText::new(self.config.markdown_path.display().to_string())
-                                .size(13.0)
+                                .size(12.0)
                                 .color(markdown_style.colors.muted_text),
                         )
                         .truncate(),
@@ -444,6 +594,12 @@ impl NvmdApp {
             self.render_settings_panel(ctx);
             markdown_style = self.settings.style();
         }
+
+        if self.show_toc {
+            self.render_toc_panel(ctx, &markdown_style);
+        }
+
+        self.render_search_bar(ctx, &markdown_style);
 
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(markdown_style.colors.app_background))
@@ -496,16 +652,20 @@ impl NvmdApp {
                                             );
                                             if let Some(error) = &self.error {
                                                 ui.colored_label(
-                                                    egui::Color32::from_rgb(180, 40, 40),
+                                                    egui::Color32::from_rgb(255, 100, 100),
                                                     error,
                                                 );
                                             } else if let Some(document) = &mut self.document {
+                                                let search_match = self.search.current_match();
                                                 crate::document::render::render_document(
                                                     ui,
                                                     document,
                                                     self.options.render_mermaid,
                                                     &markdown_style,
                                                     &mut self.navigation,
+                                                    self.highlighter.as_ref(),
+                                                    &mut self.image_cache,
+                                                    search_match,
                                                 );
                                             }
                                         },
@@ -535,6 +695,32 @@ impl NvmdApp {
         if self.show_help && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             self.show_help = false;
             return;
+        }
+        if self.search.active {
+            if !ctx.wants_keyboard_input() {
+                if ctx.input(|i| i.key_pressed(egui::Key::N) && i.modifiers.shift) {
+                    self.search.prev();
+                    if let Some(idx) = self.search.current_match() {
+                        self.navigation.request_source_block(idx);
+                    }
+                } else if ctx.input(|i| i.key_pressed(egui::Key::N)) {
+                    self.search.next();
+                    if let Some(idx) = self.search.current_match() {
+                        self.navigation.request_source_block(idx);
+                    }
+                }
+            }
+            return;
+        }
+        if !ctx.wants_keyboard_input() {
+            if ctx.input(|i| i.key_pressed(egui::Key::T)) {
+                self.show_toc = !self.show_toc;
+                return;
+            }
+            if ctx.input(|i| i.key_pressed(egui::Key::Slash)) {
+                self.search.open();
+                return;
+            }
         }
         for action in crate::input::collect_actions(ctx, &mut self.navigation) {
             match action {
@@ -572,7 +758,7 @@ impl NvmdApp {
                             ui.label(
                                 egui::RichText::new(":")
                                     .font(egui::FontId::monospace(16.0))
-                                    .color(self.settings.style().colors.strong_text),
+                                    .color(self.settings.style().colors.link),
                             );
                             let before = self.palette.query.clone();
                             let response = ui.add_sized(
@@ -705,6 +891,24 @@ impl NvmdApp {
                 .request_mermaid_command(MermaidViewportCommand::ZoomOut)
                 .then_some(())
                 .ok_or("Select a Mermaid diagram before using :zoom-out."),
+            PaletteCommand::Toc => {
+                self.show_toc = !self.show_toc;
+                Ok(())
+            }
+            PaletteCommand::Search => {
+                self.search.open();
+                Ok(())
+            }
+            PaletteCommand::ToggleTheme => {
+                use crate::render::settings::MarkdownPreset;
+                self.settings.preset = if self.settings.preset == MarkdownPreset::Light {
+                    MarkdownPreset::Dark
+                } else {
+                    MarkdownPreset::Light
+                };
+                render::theme::configure(ctx, &self.settings.style());
+                Ok(())
+            }
             PaletteCommand::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 Ok(())
@@ -776,6 +980,19 @@ impl NvmdApp {
                     if ui.button("Close").clicked() {
                         close_clicked = true;
                     }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        use crate::render::settings::MarkdownPreset;
+                        let is_light = self.settings.preset == MarkdownPreset::Light;
+                        let label = if is_light { "☀ Light" } else { "☾ Dark" };
+                        if ui.button(label).clicked() {
+                            self.settings.preset = if is_light {
+                                MarkdownPreset::Dark
+                            } else {
+                                MarkdownPreset::Light
+                            };
+                            render::theme::configure(ctx, &self.settings.style());
+                        }
+                    });
                 });
                 ui.horizontal_wrapped(|ui| {
                     keycap(ui, "Esc");
@@ -889,13 +1106,16 @@ impl NvmdApp {
                                     .strong()
                                     .color(egui::Color32::WHITE),
                             )
-                            .fill(egui::Color32::from_rgb(35, 134, 54));
+                            .fill(egui::Color32::from_rgb(38, 96, 188));
                             if ui.add(save).clicked() {
                                 self.save_settings();
                             }
 
-                            let reset = egui::Button::new("Reset")
-                                .fill(egui::Color32::from_rgb(33, 38, 45));
+                            let reset = egui::Button::new(
+                                egui::RichText::new("Reset")
+                                    .color(egui::Color32::from_rgb(140, 164, 200)),
+                            )
+                            .fill(egui::Color32::from_rgb(18, 26, 44));
                             if ui.add(reset).clicked() {
                                 self.settings.reset_to_default();
                                 self.save_settings();
@@ -925,6 +1145,9 @@ impl NvmdApp {
     fn collect_mermaid_results(&mut self) {
         while let Ok(result) = self.mermaid_results.try_recv() {
             self.mermaid_jobs.remove(&result.key);
+            if result.generation != self.render_generation {
+                continue;
+            }
             if let Some(document) = &mut self.document {
                 apply_mermaid_result(&mut document.blocks, result);
             }
@@ -935,12 +1158,18 @@ impl NvmdApp {
         if !self.options.render_mermaid {
             return;
         }
+        if self.mermaid_jobs.len() >= MAX_CONCURRENT_MERMAID_JOBS {
+            return;
+        }
 
         let Some(document) = &self.document else {
             return;
         };
         let jobs = pending_mermaid_sources(&document.blocks);
         for source in jobs {
+            if self.mermaid_jobs.len() >= MAX_CONCURRENT_MERMAID_JOBS {
+                break;
+            }
             let key = MermaidCache::key(&source);
             if !self.mermaid_jobs.insert(key.clone()) {
                 continue;
@@ -949,6 +1178,7 @@ impl NvmdApp {
             let sender = self.mermaid_sender.clone();
             let mermaid = self.mermaid.clone();
             let repaint_ctx = ctx.clone();
+            let generation = self.render_generation;
             std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     mermaid.render_image(&source).map_err(|err| err.to_string())
@@ -961,11 +1191,218 @@ impl NvmdApp {
                 })
                 .and_then(|result| result);
 
-                let _ = sender.send(MermaidJobResult { key, result });
+                let _ = sender.send(MermaidJobResult { key, generation, result });
                 repaint_ctx.request_repaint();
             });
         }
     }
+
+    fn collect_image_results(&mut self) {
+        while let Ok(job) = self.image_results.try_recv() {
+            let entry = match job.result {
+                Ok(image) => ImageEntry::Loaded(image),
+                Err(reason) => ImageEntry::Failed(reason),
+            };
+            self.image_cache.insert(job.path, entry);
+        }
+    }
+
+    fn start_image_jobs(&mut self, ctx: &egui::Context) {
+        let pending: Vec<String> = self
+            .image_cache
+            .iter()
+            .filter_map(|(path, entry)| {
+                if matches!(entry, ImageEntry::Loading) {
+                    Some(path.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        for path in pending {
+            let sender = self.image_sender.clone();
+            let path_clone = path.clone();
+            let repaint_ctx = ctx.clone();
+            std::thread::spawn(move || {
+                let result = load_image_from_path(&path_clone);
+                let _ = sender.send(ImageJobResult { path: path_clone, result });
+                repaint_ctx.request_repaint();
+            });
+        }
+    }
+
+    fn render_toc_panel(&mut self, ctx: &egui::Context, markdown_style: &crate::render::settings::MarkdownStyle) {
+        let mut jump_to: Option<usize> = None;
+        egui::SidePanel::left("toc-panel")
+            .resizable(true)
+            .default_width(220.0)
+            .min_width(140.0)
+            .max_width(360.0)
+            .frame(
+                egui::Frame::new()
+                    .fill(markdown_style.colors.chrome_background)
+                    .stroke(egui::Stroke::new(1.0, markdown_style.colors.chrome_border))
+                    .inner_margin(egui::Margin::symmetric(12, 10)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Contents")
+                            .size(12.0)
+                            .strong()
+                            .color(markdown_style.colors.muted_text),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            self.show_toc = false;
+                        }
+                    });
+                });
+                ui.add_space(6.0);
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        for entry in &self.toc_entries {
+                            let indent = (entry.level.saturating_sub(1) as f32) * 12.0;
+                            ui.horizontal(|ui| {
+                                ui.add_space(indent);
+                                let size = if entry.level == 1 { 13.0 } else { 12.0 };
+                                let color = if entry.level == 1 {
+                                    markdown_style.colors.strong_text
+                                } else {
+                                    markdown_style.colors.text
+                                };
+                                if ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&entry.text)
+                                            .size(size)
+                                            .color(color),
+                                    )
+                                    .sense(egui::Sense::click())
+                                    .truncate(),
+                                ).clicked() {
+                                    jump_to = Some(entry.block_index);
+                                }
+                            });
+                            ui.add_space(2.0);
+                        }
+                    });
+            });
+        if let Some(index) = jump_to {
+            self.navigation.request_source_block(index);
+        }
+    }
+
+    fn render_search_bar(&mut self, ctx: &egui::Context, markdown_style: &crate::render::settings::MarkdownStyle) {
+        if !self.search.active {
+            return;
+        }
+
+        let mut close = false;
+        let mut query_changed = false;
+        let mut go_next = false;
+        let mut go_prev = false;
+
+        egui::TopBottomPanel::bottom("search-bar")
+            .frame(
+                egui::Frame::new()
+                    .fill(markdown_style.colors.chrome_background)
+                    .stroke(egui::Stroke::new(1.0, markdown_style.colors.chrome_border))
+                    .inner_margin(egui::Margin::symmetric(14, 8)),
+            )
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("/")
+                            .font(egui::FontId::monospace(14.0))
+                            .color(markdown_style.colors.link),
+                    );
+                    let before = self.search.query.clone();
+                    let response = ui.add_sized(
+                        [200.0, 24.0],
+                        egui::TextEdit::singleline(&mut self.search.query)
+                            .id(egui::Id::new("search-input"))
+                            .hint_text("search…"),
+                    );
+                    if self.search.request_focus {
+                        response.request_focus();
+                        self.search.request_focus = false;
+                    }
+                    if before != self.search.query {
+                        query_changed = true;
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        go_next = true;
+                    }
+                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                        close = true;
+                    }
+                    if !self.search.matches.is_empty() {
+                        let count_text = format!(
+                            "{}/{}",
+                            self.search.selected + 1,
+                            self.search.matches.len()
+                        );
+                        ui.label(
+                            egui::RichText::new(count_text)
+                                .size(12.0)
+                                .color(markdown_style.colors.muted_text),
+                        );
+                    } else if !self.search.query.is_empty() {
+                        ui.label(
+                            egui::RichText::new("no matches")
+                                .size(12.0)
+                                .color(markdown_style.colors.warning_text),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("✕").clicked() {
+                            close = true;
+                        }
+                        if ui.small_button("↓").on_hover_text("Next (n)").clicked() {
+                            go_next = true;
+                        }
+                        if ui.small_button("↑").on_hover_text("Prev (N)").clicked() {
+                            go_prev = true;
+                        }
+                    });
+                });
+            });
+
+        if close {
+            self.search.close();
+        } else {
+            if query_changed {
+                if let Some(doc) = &self.document {
+                    let doc_clone = doc.clone();
+                    self.search.update_matches(&doc_clone);
+                }
+            }
+            if go_next {
+                self.search.next();
+            }
+            if go_prev {
+                self.search.prev();
+            }
+            if let Some(block_index) = self.search.current_match() {
+                if go_next || go_prev {
+                    self.navigation.request_source_block(block_index);
+                }
+            }
+        }
+    }
+}
+
+fn load_image_from_path(path: &str) -> Result<egui::ColorImage, String> {
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+    let rgba = img.to_rgba8();
+    let (w, h) = rgba.dimensions();
+    Ok(egui::ColorImage::from_rgba_unmultiplied(
+        [w as usize, h as usize],
+        &rgba,
+    ))
 }
 
 fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
@@ -1086,9 +1523,29 @@ fn responsive_page_width(
     }
 }
 
+fn extract_toc(document: &Document) -> Vec<TocEntry> {
+    document
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(index, block)| {
+            if let Block::Heading { level, content, .. } = block {
+                Some(TocEntry {
+                    block_index: index,
+                    level: *level,
+                    text: plain_text(content),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 fn result_ref_clone(result: &MermaidJobResult) -> MermaidJobResult {
     MermaidJobResult {
         key: result.key.clone(),
+        generation: result.generation,
         result: result.result.clone(),
     }
 }
