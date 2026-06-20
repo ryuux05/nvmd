@@ -6,7 +6,7 @@ Lightweight native Markdown preview for Neovim.
 
 ## Why
 
-Most Markdown preview flows either open a browser tab or embed browser technology. `nvmd` is intentionally native: Rust, `egui`, `pulldown-cmark`, `notify`, and native Mermaid rendering.
+Most Markdown preview flows either open a browser tab or embed browser technology. `nvmd` is intentionally native: Rust, `egui`, `pulldown-cmark`, `notify`, and native Mermaid rendering. No Electron, no WebView, no browser process.
 
 ## Run
 
@@ -16,16 +16,13 @@ cargo run -- README.md
 
 The preview launches as a detached process, so the terminal prompt returns immediately.
 
-Help:
-
 ```sh
 cargo run -- --help
 ```
 
 ## Neovim Plugin
 
-The plugin can use prebuilt release binaries, so users do not need Rust unless
-they want to build from source. With `packer.nvim`:
+The plugin uses prebuilt release binaries, so users do not need Rust unless they want to build from source. With `packer.nvim`:
 
 ```lua
 use {
@@ -38,32 +35,6 @@ use {
     })
   end,
 }
-```
-
-Run `:PackerSync`, open a Markdown file, and use `:NvmdOpen`. You can also
-place the cursor over a Markdown filename in a file picker or file explorer and
-run `:NvmdOpen` without opening that file first.
-
-If you previously installed `nvmd` with `run = "cargo build --release"`, remove
-the old plugin block from your Neovim config first, then run:
-
-```vim
-:PackerCompile
-:PackerClean
-```
-
-If `:PackerClean` does not remove the old checkout, delete it manually:
-
-```sh
-rm -rf ~/.local/share/nvim/site/pack/packer/start/nvmd
-rm -rf ~/.local/share/nvim/site/pack/packer/opt/nvmd
-```
-
-After that, add the `run = "sh scripts/install-binary.sh"` block above, restart
-Neovim, and run:
-
-```vim
-:PackerSync
 ```
 
 With `lazy.nvim`:
@@ -81,53 +52,94 @@ With `lazy.nvim`:
 }
 ```
 
-Set `binary = "/custom/path/to/nvmd"` only when overriding the automatically
-detected release binary or using a separately installed executable.
+Run `:PackerSync` (or `Lazy sync`), open a Markdown file, and use `:NvmdOpen`.
 
 Available commands:
 
-- `:NvmdOpen` opens a viewer for the current Markdown buffer, an optional file
-  argument, or the Markdown filename under the cursor.
-- `:NvmdClose` closes that file's viewer.
-- `:NvmdToggle` toggles that file's viewer.
-- `:NvmdRefresh` republishes the cursor position or opens the viewer if needed.
-- `:NvmdInstallBinary` downloads the matching prebuilt binary from the latest
-  GitHub release.
-- `:NvmdBuild` runs `cargo build --release` inside the installed plugin
-  directory when building from source.
+- `:NvmdOpen` — open a viewer for the current buffer, a file argument, or the filename under the cursor
+- `:NvmdClose` — close that file's viewer
+- `:NvmdToggle` — toggle the viewer
+- `:NvmdRefresh` — republish cursor position or open if closed
+- `:NvmdInstallBinary` — download the matching prebuilt binary
+- `:NvmdBuild` — build from source with `cargo build --release`
 
-If `:NvmdOpen` reports that the binary is missing, run `:NvmdInstallBinary`,
-`:PackerSync`, or your plugin manager's rebuild command. Building from source
-with `:NvmdBuild` requires Rust/Cargo.
+## Keyboard Shortcuts
 
-Prebuilt install requires a GitHub Release with binary assets. Maintainers can
-create one by pushing a version tag such as `v0.1.0`; the release workflow will
-build and upload the platform binaries.
+Press `:` in the preview window to open the command palette.
 
-Until the first release exists, `scripts/install-binary.sh` falls back to
-`cargo build --release` when Rust/Cargo is available. Users without Rust need a
-published release asset.
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Scroll down / up |
+| `/` | Open in-document search |
+| `T` | Toggle table of contents sidebar |
+| `:` | Open command palette |
+| `q` | Close the viewer |
+| `Esc` | Toggle settings / exit Mermaid control |
+| `Space j/k` | Select next / previous Mermaid diagram |
+| `Enter` | Open selected Mermaid diagram in large view |
+| `h/j/k/l` | Pan inside Mermaid canvas |
+| `[` / `]` | Zoom out / in Mermaid diagram |
+| `f` | Fit Mermaid diagram to viewport |
 
-While a viewer is open, moving the Neovim cursor scrolls the preview to the
-corresponding rendered block. Entering a Mermaid fenced block also focuses that
-diagram for keyboard controls in the viewer.
+All keys except `Esc` and `Enter` are remappable via `~/.config/nvmd/config.toml`.
 
-By default, the plugin previews unsaved buffer edits after a short `150ms`
-pause in typing. Set `live_reload = false` to preview only saved file changes;
-cursor-follow synchronization continues in either mode.
+### Search
 
-## Current Markdown Support
+Press `/` to open the search bar at the bottom of the window. Matching blocks are highlighted with an accent bar. Press `n` / `N` to cycle through matches, `Enter` to confirm and scroll, `Esc` to close.
 
-- Headings
-- Paragraphs
-- Fenced code blocks
-- Bullet lists
-- Ordered lists
-- Blockquotes
+### Table of Contents
+
+Press `T` to toggle a sidebar listing all headings. Click any heading to scroll the document to that section. The sidebar updates automatically on document reload.
+
+## Configuration
+
+Settings are stored in `~/.config/nvmd/config.toml`. Edit it directly or use the in-app settings panel (`Esc` to open).
+
+```toml
+# Theme: "Dark" or "Light"
+preset = "Dark"
+
+# Window size on next launch
+window_width = 1280.0
+window_height = 900.0
+
+# Enable Mermaid rendering by default (--no-mermaid CLI flag still overrides)
+enable_mermaid = true
+
+# Document layout
+page_max_width = 1012.0
+page_inner_margin = 32.0
+line_height = 1.5
+paragraph_gap = 16.0
+
+# Typography
+body_font_size = 16.0
+code_font_size = 13.6
+
+# Keybindings — single characters or named keys: "space", "enter", "escape", ":"
+[keys]
+scroll_down = "j"
+scroll_up = "k"
+palette = ":"
+quit = "q"
+toc = "t"
+search = "/"
+```
+
+## Markdown Support
+
+- Headings (H1–H6) with proportional sizing
+- Paragraphs with configurable line height and spacing
+- **Bold**, *italic*, ~~strikethrough~~, `inline code`
+- Fenced code blocks with **syntax highlighting** (Rust, Python, JS/TS, Go, Bash, JSON, TOML, YAML, and more via syntect)
+- Bullet lists, ordered lists, and **task list checkboxes** (`- [x]` / `- [ ]`)
+- Blockquotes with accent border
 - Horizontal rules
-- Mermaid fenced code blocks
-
-Unsupported Markdown is ignored or shown as readable fallback content rather than crashing.
+- Tables with alternating row stripes
+- **Images** — local file paths are loaded and rendered inline; alt text shown as caption
+- **Hyperlinks** — `http://`, `https://`, and `mailto:` links open in the default browser on click
+- Mermaid fenced code blocks (see below)
+- Footnotes, definition lists, HTML blocks (shown as source), math blocks (shown as source)
 
 ## Mermaid Support
 
@@ -140,35 +152,35 @@ flowchart LR
 ```
 ````
 
-Rendered example:
+Rendering uses `mermaid-rs-renderer` natively. SVG is rasterized with `resvg`/`usvg`/`tiny-skia`. Renders are bounded to 4 concurrent jobs and cancelled automatically on document reload to avoid stale work on large files.
 
-```mermaid
-flowchart LR
-  A[Neovim] --> B[nvmd]
-  B --> C[egui window]
-  B --> D[Mermaid cache]
-```
+Diagram controls when a Mermaid block is selected:
 
-Rendering uses `mermaid-rs-renderer` natively and stores cached SVG files in the platform cache directory through `directories`. The SVG is rasterized with `resvg`/`usvg`/`tiny-skia` for display in `egui`.
+- `Enter` — open in large resizable view; press again to grow step by step
+- `h/j/k/l` — pan the canvas
+- `[` / `]` — zoom
+- `f` — fit to viewport
+- `Esc` — close large view
 
-Mermaid compatibility is intentionally lightweight in V1. Unsupported diagram types or renderer failures are shown inline as an error with the original source block.
+## Code Block Features
 
-## Viewer Commands
+- **Copy button** — hover over any code block to reveal a "copy" button in the top-right corner; clicking it copies the raw source to the clipboard and shows a ✓ confirmation for 1.4 seconds
+- **Syntax highlighting** — colors powered by syntect with built-in themes that match the active dark/light preset
 
-Press `:` in the preview to open the command palette. Available commands include `:help`, `:settings`, `:reload`, `:top`, `:bottom`, `:mnext`, `:mprev`, `:mopen`, `:fit`, `:zoom-in`, `:zoom-out`, and `:q`.
+## Themes
 
-When a Mermaid diagram is selected, press `Enter` to open it in a large resizable view; press `Enter` again to enlarge it step by step until it fills the available window. Use `h/j/k/l` to pan around its whiteboard canvas, `[` / `]` to change zoom, and `f` to center and fit the complete diagram in the view. Use `Space j` and `Space k` to select or switch diagrams, including while the large view is open; press `Esc` to close it.
+Two built-in presets:
 
-## Roadmap
+- **Dark** — deep navy/blue palette inspired by Tokyo Night
+- **Light** — clean white/grey palette
 
-- Bidirectional source navigation from the preview
-- Syntax highlighting
-- Image rendering
-- Table support
-- Themes
-- Config file
-- Better Mermaid compatibility
-- Async Mermaid render queue
+Switch with `:theme` in the command palette, the ☀/☾ toggle in the settings panel, or by setting `preset = "Light"` in `config.toml`.
+
+## Cursor Follow
+
+While a viewer is open, moving the Neovim cursor scrolls the preview to the corresponding rendered block. Entering a Mermaid fenced block also focuses that diagram for keyboard controls.
+
+By default, the plugin previews unsaved buffer edits after a short `150ms` pause. Set `live_reload = false` to preview only saved file changes.
 
 ## Non-goals
 
