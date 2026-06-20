@@ -818,42 +818,9 @@ fn code_block(
     let copy_id = egui::Id::new(("code-copy", block_id));
     let hover_id = egui::Id::new(("code-hover", block_id));
 
-    // Use previous frame's hover state so the button is always in normal layout flow.
     let was_hovered: bool = ui.data(|d| d.get_temp(hover_id).unwrap_or(false));
 
     ui.add_space(4.0);
-    // Record the top of the header row so the hover region covers both it and the frame.
-    let header_top = ui.next_widget_position().y;
-    ui.horizontal(|ui| {
-        if let Some(lang) = language {
-            ui.label(
-                RichText::new(lang)
-                    .font(FontId::new(style.small_font_size, FontFamily::Monospace))
-                    .color(style.colors.muted_text),
-            );
-        }
-        if was_hovered {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let copied_at: Option<std::time::Instant> =
-                    ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
-                let is_copied = copied_at
-                    .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
-                    .unwrap_or(false);
-                let btn_label = if is_copied { "✓" } else { "copy" };
-                let btn = egui::Button::new(
-                    RichText::new(btn_label)
-                        .size(11.0)
-                        .color(style.colors.muted_text),
-                )
-                .fill(egui::Color32::TRANSPARENT);
-                if ui.add(btn).clicked() && !is_copied {
-                    ui.ctx().copy_text(code.to_owned());
-                    ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
-                }
-            });
-        }
-    });
-    ui.add_space(2.0);
 
     let frame_resp = egui::Frame::new()
         .fill(style.colors.code_background)
@@ -861,6 +828,37 @@ fn code_block(
         .corner_radius(8.0)
         .inner_margin(egui::Margin::same(style.code_margin))
         .show(ui, |ui| {
+            // Header row: language label left, copy button right (only on hover).
+            ui.horizontal(|ui| {
+                if let Some(lang) = language {
+                    ui.label(
+                        RichText::new(lang)
+                            .font(FontId::new(style.small_font_size, FontFamily::Monospace))
+                            .color(style.colors.muted_text),
+                    );
+                }
+                if was_hovered {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let copied_at: Option<std::time::Instant> =
+                            ui.data(|d| d.get_temp::<std::time::Instant>(copy_id));
+                        let is_copied = copied_at
+                            .map(|t| t.elapsed() < std::time::Duration::from_millis(1400))
+                            .unwrap_or(false);
+                        let btn_label = if is_copied { "✓" } else { "copy" };
+                        let btn = egui::Button::new(
+                            RichText::new(btn_label)
+                                .size(11.0)
+                                .color(style.colors.muted_text),
+                        )
+                        .fill(egui::Color32::TRANSPARENT);
+                        if ui.add(btn).clicked() && !is_copied {
+                            ui.ctx().copy_text(code.to_owned());
+                            ui.data_mut(|d| d.insert_temp(copy_id, std::time::Instant::now()));
+                        }
+                    });
+                }
+            });
+            ui.add_space(6.0);
             // id_salt ensures each code block's ScrollArea has a unique ID.
             egui::ScrollArea::horizontal()
                 .id_salt(block_id)
@@ -897,14 +895,7 @@ fn code_block(
                 });
         });
 
-    // Hover region spans from the header row top down to the bottom of the frame,
-    // so moving the cursor up to click the copy button doesn't dismiss it.
-    let frame_rect = frame_resp.response.rect;
-    let full_rect = egui::Rect::from_min_max(
-        egui::pos2(frame_rect.left(), header_top),
-        frame_rect.max,
-    );
-    let is_hovered = ui.rect_contains_pointer(full_rect);
+    let is_hovered = ui.rect_contains_pointer(frame_resp.response.rect);
     ui.data_mut(|d| d.insert_temp(hover_id, is_hovered));
     if is_hovered || was_hovered {
         ui.ctx().request_repaint();
