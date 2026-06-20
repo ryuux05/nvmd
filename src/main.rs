@@ -19,7 +19,6 @@ use clap::{ArgAction, Parser};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
-const DEFAULT_WINDOW_SIZE: [f32; 2] = [1280.0, 900.0];
 
 #[derive(Debug, Parser)]
 #[command(
@@ -60,8 +59,18 @@ fn main() -> Result<()> {
 
 fn run(cli: Cli) -> Result<()> {
     let config = config::Config::new(cli.path)?;
+    let viewer_settings = render::settings::ViewerSettings::load();
+    let window_size = [
+        viewer_settings.window_width.clamp(400.0, 3840.0),
+        viewer_settings.window_height.clamp(300.0, 2160.0),
+    ];
+    let render_mermaid = if cli.no_mermaid {
+        false
+    } else {
+        viewer_settings.enable_mermaid
+    };
     let app_options = app::AppOptions {
-        render_mermaid: !cli.no_mermaid,
+        render_mermaid,
         cursor_file: cli.cursor_file,
         content_file: cli.content_file,
     };
@@ -70,7 +79,7 @@ fn run(cli: Cli) -> Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title(title.clone())
-            .with_inner_size(DEFAULT_WINDOW_SIZE),
+            .with_inner_size(window_size),
         renderer: eframe::Renderer::Glow,
         ..Default::default()
     };

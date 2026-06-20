@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ViewerSettings {
     pub preset: MarkdownPreset,
+    pub window_width: f32,
+    pub window_height: f32,
+    pub enable_mermaid: bool,
     pub page_max_width: f32,
     pub page_inner_margin: f32,
     pub body_font_size: f32,
@@ -20,6 +23,31 @@ pub struct ViewerSettings {
     pub table_spacing_x: f32,
     pub table_spacing_y: f32,
     pub heading_sizes: [f32; 6],
+    pub keys: KeyConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct KeyConfig {
+    pub scroll_down: String,
+    pub scroll_up: String,
+    pub palette: String,
+    pub quit: String,
+    pub toc: String,
+    pub search: String,
+}
+
+impl Default for KeyConfig {
+    fn default() -> Self {
+        Self {
+            scroll_down: "j".to_owned(),
+            scroll_up: "k".to_owned(),
+            palette: ":".to_owned(),
+            quit: "q".to_owned(),
+            toc: "t".to_owned(),
+            search: "/".to_owned(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -78,6 +106,9 @@ impl Default for ViewerSettings {
         let style = MarkdownStyle::dark();
         Self {
             preset: MarkdownPreset::Dark,
+            window_width: 1280.0,
+            window_height: 900.0,
+            enable_mermaid: true,
             page_max_width: style.page_max_width,
             page_inner_margin: style.page_inner_margin,
             body_font_size: style.body_font_size,
@@ -90,6 +121,7 @@ impl Default for ViewerSettings {
             table_spacing_x: style.table_spacing.x,
             table_spacing_y: style.table_spacing.y,
             heading_sizes: style.heading_sizes,
+            keys: KeyConfig::default(),
         }
     }
 }
@@ -102,17 +134,25 @@ impl Default for MarkdownPreset {
 
 impl ViewerSettings {
     pub fn load() -> Self {
-        let Some(path) = settings_path() else {
+        let Some(path) = config_path() else {
             return Self::default();
         };
-        let Ok(source) = fs::read_to_string(path) else {
+        // Migrate from old viewer.toml if config.toml doesn't exist yet
+        if !path.exists() {
+            if let Some(old) = legacy_viewer_path() {
+                if old.exists() {
+                    let _ = fs::rename(&old, &path);
+                }
+            }
+        }
+        let Ok(source) = fs::read_to_string(&path) else {
             return Self::default();
         };
         toml::from_str(&source).unwrap_or_default()
     }
 
     pub fn save(&self) -> std::io::Result<()> {
-        let Some(path) = settings_path() else {
+        let Some(path) = config_path() else {
             return Ok(());
         };
         if let Some(parent) = path.parent() {
@@ -238,9 +278,14 @@ impl MarkdownStyle {
     }
 }
 
-pub fn settings_path() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "nvmd").map(|project| project.config_dir().join("viewer.toml"))
+pub fn config_path() -> Option<PathBuf> {
+    ProjectDirs::from("", "", "nvmd").map(|p| p.config_dir().join("config.toml"))
 }
+
+fn legacy_viewer_path() -> Option<PathBuf> {
+    ProjectDirs::from("", "", "nvmd").map(|p| p.config_dir().join("viewer.toml"))
+}
+
 
 #[cfg(test)]
 mod tests {

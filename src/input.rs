@@ -6,6 +6,73 @@ const LEADER_TIMEOUT: Duration = Duration::from_millis(750);
 const DOCUMENT_SCROLL_STEP: f32 = 52.0;
 const MAX_EXPANDED_SIZE_STEP: u8 = 3;
 
+/// Parsed keybindings derived from `KeyConfig` strings.
+#[derive(Debug, Clone)]
+pub struct KeyMap {
+    pub scroll_down: egui::Key,
+    pub scroll_up: egui::Key,
+    pub palette: egui::Key,
+    pub quit: egui::Key,
+    pub toc: egui::Key,
+    pub search: egui::Key,
+}
+
+impl Default for KeyMap {
+    fn default() -> Self {
+        Self {
+            scroll_down: egui::Key::J,
+            scroll_up: egui::Key::K,
+            palette: egui::Key::Colon,
+            quit: egui::Key::Q,
+            toc: egui::Key::T,
+            search: egui::Key::Slash,
+        }
+    }
+}
+
+pub fn parse_key(s: &str) -> Option<egui::Key> {
+    match s.to_lowercase().as_str() {
+        "a" => Some(egui::Key::A), "b" => Some(egui::Key::B), "c" => Some(egui::Key::C),
+        "d" => Some(egui::Key::D), "e" => Some(egui::Key::E), "f" => Some(egui::Key::F),
+        "g" => Some(egui::Key::G), "h" => Some(egui::Key::H), "i" => Some(egui::Key::I),
+        "j" => Some(egui::Key::J), "k" => Some(egui::Key::K), "l" => Some(egui::Key::L),
+        "m" => Some(egui::Key::M), "n" => Some(egui::Key::N), "o" => Some(egui::Key::O),
+        "p" => Some(egui::Key::P), "q" => Some(egui::Key::Q), "r" => Some(egui::Key::R),
+        "s" => Some(egui::Key::S), "t" => Some(egui::Key::T), "u" => Some(egui::Key::U),
+        "v" => Some(egui::Key::V), "w" => Some(egui::Key::W), "x" => Some(egui::Key::X),
+        "y" => Some(egui::Key::Y), "z" => Some(egui::Key::Z),
+        "0" => Some(egui::Key::Num0), "1" => Some(egui::Key::Num1),
+        "2" => Some(egui::Key::Num2), "3" => Some(egui::Key::Num3),
+        "4" => Some(egui::Key::Num4), "5" => Some(egui::Key::Num5),
+        "6" => Some(egui::Key::Num6), "7" => Some(egui::Key::Num7),
+        "8" => Some(egui::Key::Num8), "9" => Some(egui::Key::Num9),
+        "space" => Some(egui::Key::Space),
+        "enter" | "return" => Some(egui::Key::Enter),
+        "escape" | "esc" => Some(egui::Key::Escape),
+        ":" | "colon" => Some(egui::Key::Colon),
+        "/" | "slash" => Some(egui::Key::Slash),
+        "-" | "minus" => Some(egui::Key::Minus),
+        "+" | "plus" | "=" => Some(egui::Key::Plus),
+        "[" => Some(egui::Key::OpenBracket),
+        "]" => Some(egui::Key::CloseBracket),
+        _ => None,
+    }
+}
+
+impl KeyMap {
+    pub fn from_config(config: &crate::render::settings::KeyConfig) -> Self {
+        let defaults = Self::default();
+        Self {
+            scroll_down: parse_key(&config.scroll_down).unwrap_or(defaults.scroll_down),
+            scroll_up: parse_key(&config.scroll_up).unwrap_or(defaults.scroll_up),
+            palette: parse_key(&config.palette).unwrap_or(defaults.palette),
+            quit: parse_key(&config.quit).unwrap_or(defaults.quit),
+            toc: parse_key(&config.toc).unwrap_or(defaults.toc),
+            search: parse_key(&config.search).unwrap_or(defaults.search),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavigationMode {
     Document,
@@ -191,7 +258,7 @@ impl NavigationState {
         self.expanded_mermaid.take().is_some()
     }
 
-    fn handle_navigation_input(&mut self, ctx: &egui::Context) {
+    fn handle_navigation_input(&mut self, ctx: &egui::Context, keys: &KeyMap) {
         self.consumed_control_keys = false;
         if ctx.wants_keyboard_input() {
             self.leader_started = None;
@@ -207,9 +274,9 @@ impl NavigationState {
         }
 
         let leader_pressed = ctx.input(|input| input.key_pressed(egui::Key::Space));
-        let direction = if ctx.input(|input| input.key_pressed(egui::Key::J)) {
+        let direction = if ctx.input(|input| input.key_pressed(keys.scroll_down)) {
             Some(1_i32)
-        } else if ctx.input(|input| input.key_pressed(egui::Key::K)) {
+        } else if ctx.input(|input| input.key_pressed(keys.scroll_up)) {
             Some(-1_i32)
         } else {
             None
@@ -299,9 +366,9 @@ pub enum InputAction {
     CloseWindow,
 }
 
-pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState) -> Vec<InputAction> {
+pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState, keys: &KeyMap) -> Vec<InputAction> {
     let mut actions = Vec::new();
-    if !ctx.wants_keyboard_input() && ctx.input(|input| input.key_pressed(egui::Key::Colon)) {
+    if !ctx.wants_keyboard_input() && ctx.input(|input| input.key_pressed(keys.palette)) {
         actions.push(InputAction::OpenPalette);
         return actions;
     }
@@ -316,7 +383,7 @@ pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState) ->
             actions.push(InputAction::ToggleSettings);
         }
     }
-    if !ctx.wants_keyboard_input() && ctx.input(|input| input.key_pressed(egui::Key::Q)) {
+    if !ctx.wants_keyboard_input() && ctx.input(|input| input.key_pressed(keys.quit)) {
         actions.push(InputAction::CloseWindow);
     }
     if !ctx.wants_keyboard_input()
@@ -325,7 +392,7 @@ pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState) ->
     {
         navigation.consumed_control_keys = true;
     }
-    navigation.handle_navigation_input(ctx);
+    navigation.handle_navigation_input(ctx, keys);
     actions
 }
 

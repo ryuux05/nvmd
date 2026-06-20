@@ -11,7 +11,7 @@ use crate::document::{
     parser,
 };
 use crate::highlight::Highlighter;
-use crate::input::{DocumentJump, InputAction, MermaidViewportCommand, NavigationState};
+use crate::input::{DocumentJump, InputAction, KeyMap, MermaidViewportCommand, NavigationState};
 use crate::mermaid::{cache::MermaidCache, renderer::MermaidRenderer};
 use crate::render::{self, settings::ViewerSettings};
 use crate::sync::CursorSync;
@@ -264,6 +264,7 @@ pub struct NvmdApp {
     mermaid_sender: mpsc::Sender<MermaidJobResult>,
     render_generation: u64,
     highlighter: Option<Highlighter>,
+    key_map: KeyMap,
     settings: ViewerSettings,
     show_settings: bool,
     settings_error: Option<String>,
@@ -313,6 +314,7 @@ impl NvmdApp {
             let (image_sender, image_results) = mpsc::channel();
             let cursor_sync = CursorSync::new(options.cursor_file.clone());
             let highlighter = Highlighter::new().ok();
+            let key_map = KeyMap::from_config(&settings.keys);
             let mut app = Self {
                 watcher: watcher_result.ok(),
                 watcher_error,
@@ -327,6 +329,7 @@ impl NvmdApp {
                 mermaid_sender,
                 render_generation: 0,
                 highlighter,
+                key_map,
                 settings,
                 show_settings: false,
                 settings_error: None,
@@ -377,6 +380,7 @@ impl NvmdApp {
             mermaid_sender,
             render_generation: 0,
             highlighter: None,
+            key_map: KeyMap::default(),
             settings: ViewerSettings::default(),
             show_settings: false,
             settings_error: None,
@@ -518,6 +522,24 @@ fn settings_slider(
                 .show_value(false)
                 .trailing_fill(true),
         );
+    });
+    ui.add_space(4.0);
+}
+
+fn keybinding_row(ui: &mut egui::Ui, label: &str, value: &mut String) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label)
+                .size(13.0)
+                .color(egui::Color32::from_rgb(140, 164, 200)),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add(
+                egui::TextEdit::singleline(value)
+                    .desired_width(48.0)
+                    .font(egui::FontId::monospace(12.0)),
+            );
+        });
     });
     ui.add_space(4.0);
 }
@@ -713,16 +735,16 @@ impl NvmdApp {
             return;
         }
         if !ctx.wants_keyboard_input() {
-            if ctx.input(|i| i.key_pressed(egui::Key::T)) {
+            if ctx.input(|i| i.key_pressed(self.key_map.toc)) {
                 self.show_toc = !self.show_toc;
                 return;
             }
-            if ctx.input(|i| i.key_pressed(egui::Key::Slash)) {
+            if ctx.input(|i| i.key_pressed(self.key_map.search)) {
                 self.search.open();
                 return;
             }
         }
-        for action in crate::input::collect_actions(ctx, &mut self.navigation) {
+        for action in crate::input::collect_actions(ctx, &mut self.navigation, &self.key_map) {
             match action {
                 InputAction::OpenPalette => self.palette.open(),
                 InputAction::ToggleSettings => {
@@ -941,10 +963,22 @@ impl NvmdApp {
                 ui.add_space(8.0);
                 ui.separator();
                 ui.label("Direct shortcuts");
-                ui.label("Esc settings / close large view / exit Mermaid   q quit   j/k scroll");
-                ui.label(
-                    "Space j/k select Mermaid   Enter open/enlarge   f fit   h/j/k/l pan   [/] zoom",
-                );
+                ui.label(format!(
+                    "Esc settings / close large view / exit Mermaid   {} quit   {}/{} scroll",
+                    self.settings.keys.quit,
+                    self.settings.keys.scroll_down,
+                    self.settings.keys.scroll_up,
+                ));
+                ui.label(format!(
+                    "Space {}/{} select Mermaid   Enter open/enlarge   f fit   h/j/k/l pan   [/] zoom",
+                    self.settings.keys.scroll_down,
+                    self.settings.keys.scroll_up,
+                ));
+                ui.label(format!(
+                    "{} table of contents   {} search",
+                    self.settings.keys.toc,
+                    self.settings.keys.search,
+                ));
             });
         self.show_help = open;
     }
@@ -1013,6 +1047,41 @@ impl NvmdApp {
                     )
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
+                        settings_section(ui, "Startup", |ui| {
+                            settings_slider(
+                                ui,
+                                &mut self.settings.window_width,
+                                400.0..=3840.0,
+                                "Window width",
+                            );
+                            settings_slider(
+                                ui,
+                                &mut self.settings.window_height,
+                                300.0..=2160.0,
+                                "Window height",
+                            );
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new("Mermaid diagrams")
+                                        .size(13.0)
+                                        .color(egui::Color32::from_rgb(140, 164, 200)),
+                                );
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.checkbox(&mut self.settings.enable_mermaid, "");
+                                });
+                            });
+                            ui.add_space(4.0);
+                        });
+
+                        settings_section(ui, "Keybindings", |ui| {
+                            keybinding_row(ui, "Scroll down", &mut self.settings.keys.scroll_down);
+                            keybinding_row(ui, "Scroll up", &mut self.settings.keys.scroll_up);
+                            keybinding_row(ui, "Command palette", &mut self.settings.keys.palette);
+                            keybinding_row(ui, "Quit", &mut self.settings.keys.quit);
+                            keybinding_row(ui, "Table of contents", &mut self.settings.keys.toc);
+                            keybinding_row(ui, "Search", &mut self.settings.keys.search);
+                        });
+
                         settings_section(ui, "Document", |ui| {
                             settings_slider(
                                 ui,
@@ -1138,6 +1207,7 @@ impl NvmdApp {
             .err()
             .map(|err| format!("failed to save settings: {err}"));
         if self.settings_error.is_none() {
+            self.key_map = KeyMap::from_config(&self.settings.keys);
             self.settings_error = Some("settings saved".to_owned());
         }
     }
