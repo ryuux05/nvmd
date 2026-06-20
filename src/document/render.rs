@@ -702,10 +702,86 @@ fn table_block(
 ) {
     use crate::document::model::TableAlignment;
 
+    let num_cols = header.len().max(rows.iter().map(|r| r.len()).max().unwrap_or(0));
+    if num_cols == 0 {
+        return;
+    }
+
+    // Estimate each column's natural width from the longest plain-text cell in that column.
+    // We use character count as a proxy for rendered width, then distribute the available
+    // width proportionally so narrow columns (like key badges) don't over-consume space.
+    let min_chars: usize = 6;
+    let col_weights: Vec<usize> = (0..num_cols)
+        .map(|col| {
+            let h = header.get(col).map(|c| plain_text(c).chars().count()).unwrap_or(0);
+            let r = rows
+                .iter()
+                .map(|row| row.get(col).map(|c| plain_text(c).chars().count()).unwrap_or(0))
+                .max()
+                .unwrap_or(0);
+            h.max(r).max(min_chars)
+        })
+        .collect();
+    let total_weight: usize = col_weights.iter().sum();
+    let h_gap = style.table_spacing.x * (num_cols as f32 - 1.0);
+    let usable = (ui.available_width() - h_gap).max(1.0);
+    let col_widths: Vec<f32> = col_weights
+        .iter()
+        .map(|&w| (w as f32 / total_weight as f32 * usable).max(40.0))
+        .collect();
+
     let col_align = |col: usize| match alignments.get(col).copied().unwrap_or(TableAlignment::None) {
         TableAlignment::Center => egui::Align::Center,
         TableAlignment::Right => egui::Align::RIGHT,
         _ => egui::Align::LEFT,
+    };
+
+    let render_cell = |ui: &mut egui::Ui, col: usize, inlines: &[Inline], strong: bool| {
+        let w = col_widths.get(col).copied().unwrap_or(80.0);
+        ui.set_min_width(w);
+        let color = if strong { style.colors.strong_text } else { style.colors.text };
+        let layout = inline_layout(
+            inlines,
+            FontId::new(style.body_font_size, FontFamily::Proportional),
+            color,
+            strong,
+            w,
+            style.body_font_size * style.line_height,
+            style,
+        );
+        let has_links = !layout.link_sections.is_empty();
+        let sense = if has_links { egui::Sense::click() } else { egui::Sense::hover() };
+        let (pos, galley, response) = Label::new(layout.job).sense(sense).wrap().layout_in_ui(ui);
+        paint_inline_code_backgrounds(
+            ui, pos, &galley, &layout.code_sections,
+            style.colors.inline_code_background,
+        );
+        ui.painter().galley(pos, galley.clone(), color);
+        if has_links && response.clicked() {
+            if let Some(cursor_pos) = ui.ctx().pointer_interact_pos() {
+                let local = cursor_pos - pos.to_vec2();
+                'hit: for row in &galley.rows {
+                    if local.y >= row.rect.min.y && local.y <= row.rect.max.y {
+                        for glyph in &row.glyphs {
+                            if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
+                                for (section_idx, url) in &layout.link_sections {
+                                    if glyph.section_index == *section_idx {
+                                        if url.starts_with("http://")
+                                            || url.starts_with("https://")
+                                            || url.starts_with("mailto:")
+                                        {
+                                            let _ = open::that(url);
+                                        }
+                                        break 'hit;
+                                    }
+                                }
+                                break 'hit;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     };
 
     ui.scope(|ui| {
@@ -716,21 +792,7 @@ fn table_block(
             .show(ui, |ui| {
                 for (col, cell) in header.iter().enumerate() {
                     ui.with_layout(egui::Layout::left_to_right(col_align(col)), |ui| {
-                        let layout = inline_layout(
-                            cell,
-                            FontId::new(style.body_font_size, FontFamily::Proportional),
-                            style.colors.strong_text,
-                            true,
-                            ui.available_width().max(1.0),
-                            style.body_font_size * style.line_height,
-                            style,
-                        );
-                        let (pos, galley, _) = Label::new(layout.job).wrap().layout_in_ui(ui);
-                        paint_inline_code_backgrounds(
-                            ui, pos, &galley, &layout.code_sections,
-                            style.colors.inline_code_background,
-                        );
-                        ui.painter().galley(pos, galley.clone(), style.colors.strong_text);
+                        render_cell(ui, col, cell, true);
                     });
                 }
                 if !header.is_empty() {
@@ -739,45 +801,7 @@ fn table_block(
                 for row in rows {
                     for (col, cell) in row.iter().enumerate() {
                         ui.with_layout(egui::Layout::left_to_right(col_align(col)), |ui| {
-                            let layout = inline_layout(
-                                cell,
-                                FontId::new(style.body_font_size, FontFamily::Proportional),
-                                style.colors.text,
-                                false,
-                                ui.available_width().max(1.0),
-                                style.body_font_size * style.line_height,
-                                style,
-                            );
-                            let has_links = !layout.link_sections.is_empty();
-                            let sense = if has_links { egui::Sense::click() } else { egui::Sense::hover() };
-                            let (pos, galley, response) = Label::new(layout.job).sense(sense).wrap().layout_in_ui(ui);
-                            paint_inline_code_backgrounds(
-                                ui, pos, &galley, &layout.code_sections,
-                                style.colors.inline_code_background,
-                            );
-                            ui.painter().galley(pos, galley.clone(), style.colors.text);
-                            if has_links && response.clicked() {
-                                if let Some(cursor_pos) = ui.ctx().pointer_interact_pos() {
-                                    let local = cursor_pos - pos.to_vec2();
-                                    'hit: for row in &galley.rows {
-                                        if local.y >= row.rect.min.y && local.y <= row.rect.max.y {
-                                            for glyph in &row.glyphs {
-                                                if local.x >= glyph.pos.x && local.x <= glyph.max_x() {
-                                                    for (section_idx, url) in &layout.link_sections {
-                                                        if glyph.section_index == *section_idx {
-                                                            if url.starts_with("http://") || url.starts_with("https://") || url.starts_with("mailto:") {
-                                        let _ = open::that(url);
-                                    }
-                                                            break 'hit;
-                                                        }
-                                                    }
-                                                    break 'hit;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            render_cell(ui, col, cell, false);
                         });
                     }
                     ui.end_row();
