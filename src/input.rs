@@ -368,6 +368,7 @@ pub enum InputAction {
     OpenPalette,
     ToggleSettings,
     CloseWindow,
+    HeadingJump(i32),
 }
 
 pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState, keys: &KeyMap) -> Vec<InputAction> {
@@ -395,6 +396,13 @@ pub fn collect_actions(ctx: &egui::Context, navigation: &mut NavigationState, ke
         && navigation.open_selected_mermaid()
     {
         navigation.consumed_control_keys = true;
+    }
+    if !ctx.wants_keyboard_input() && navigation.mode == NavigationMode::Document {
+        if ctx.input(|i| i.key_pressed(egui::Key::CloseBracket)) {
+            actions.push(InputAction::HeadingJump(1));
+        } else if ctx.input(|i| i.key_pressed(egui::Key::OpenBracket)) {
+            actions.push(InputAction::HeadingJump(-1));
+        }
     }
     navigation.handle_navigation_input(ctx, keys);
     actions

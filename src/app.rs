@@ -281,6 +281,7 @@ pub struct NvmdApp {
     image_sender: mpsc::Sender<ImageJobResult>,
     remembered_scroll: f32,
     restore_scroll: bool,
+    heading_cursor: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -348,6 +349,7 @@ impl NvmdApp {
                 image_sender,
                 remembered_scroll: 0.0,
                 restore_scroll: false,
+                heading_cursor: 0,
             };
 
             if app.watcher.is_none() {
@@ -401,6 +403,7 @@ impl NvmdApp {
             image_sender,
             remembered_scroll: 0.0,
             restore_scroll: false,
+            heading_cursor: 0,
         }
     }
 
@@ -409,6 +412,7 @@ impl NvmdApp {
         self.mermaid_jobs.clear();
         self.image_cache.clear();
         self.restore_scroll = true;
+        self.heading_cursor = 0;
         match loader::load_markdown(reload_path(&self.config, &self.options)) {
             Ok(source) => {
                 let mut document = parser::parse_markdown(&source);
@@ -765,6 +769,18 @@ impl NvmdApp {
                 }
                 InputAction::CloseWindow => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                InputAction::HeadingJump(dir) => {
+                    let n = self.toc_entries.len();
+                    if n > 0 {
+                        if dir > 0 {
+                            self.heading_cursor = (self.heading_cursor + 1) % n;
+                        } else {
+                            self.heading_cursor = (self.heading_cursor + n - 1) % n;
+                        }
+                        let block_index = self.toc_entries[self.heading_cursor].block_index;
+                        self.navigation.request_source_block(block_index);
+                    }
                 }
             }
         }
@@ -1346,25 +1362,32 @@ impl NvmdApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        for entry in &self.toc_entries {
+                        for (i, entry) in self.toc_entries.iter().enumerate() {
                             let indent = (entry.level.saturating_sub(1) as f32) * 12.0;
+                            let is_current = i == self.heading_cursor;
                             ui.horizontal(|ui| {
                                 ui.add_space(indent);
                                 let size = if entry.level == 1 { 13.0 } else { 12.0 };
-                                let color = if entry.level == 1 {
+                                let color = if is_current {
+                                    markdown_style.colors.link
+                                } else if entry.level == 1 {
                                     markdown_style.colors.strong_text
                                 } else {
                                     markdown_style.colors.text
                                 };
-                                if ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&entry.text)
-                                            .size(size)
-                                            .color(color),
-                                    )
-                                    .sense(egui::Sense::click())
-                                    .truncate(),
-                                ).clicked() {
+                                let mut text = egui::RichText::new(&entry.text)
+                                    .size(size)
+                                    .color(color);
+                                if is_current {
+                                    text = text.strong();
+                                }
+                                let response = ui.add(
+                                    egui::Label::new(text)
+                                        .sense(egui::Sense::click())
+                                        .truncate(),
+                                );
+                                if response.clicked() {
+                                    self.heading_cursor = i;
                                     jump_to = Some(entry.block_index);
                                 }
                             });
