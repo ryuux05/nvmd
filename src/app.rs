@@ -749,6 +749,26 @@ impl NvmdApp {
                     });
                 self.navigation.set_viewport(scroll_output.inner_rect);
                 self.remembered_scroll = scroll_output.state.offset.y;
+
+                // Reading progress bar — thin line at top of the scroll area.
+                let content_h = scroll_output.content_size.y;
+                let view_h = scroll_output.inner_rect.height();
+                let scrollable = content_h - view_h;
+                if scrollable > 1.0 {
+                    let progress = (scroll_output.state.offset.y / scrollable).clamp(0.0, 1.0);
+                    let bar_rect = scroll_output.inner_rect;
+                    let bar_width = bar_rect.width() * progress;
+                    let bar_height = 3.0_f32;
+                    let bar = egui::Rect::from_min_size(
+                        bar_rect.min,
+                        egui::vec2(bar_width, bar_height),
+                    );
+                    let bar_color = markdown_style.colors.link;
+                    ctx.layer_painter(egui::LayerId::new(
+                        egui::Order::Foreground,
+                        egui::Id::new("reading_progress"),
+                    )).rect_filled(bar, 0.0, bar_color);
+                }
             });
 
         if self.show_help {
