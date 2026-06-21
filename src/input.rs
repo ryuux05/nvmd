@@ -112,6 +112,7 @@ pub struct NavigationState {
     viewport: Option<egui::Rect>,
     reveal_target: Option<usize>,
     document_scroll: f32,
+    scroll_remaining: f32,
     document_jump: Option<DocumentJump>,
     source_block: Option<usize>,
     mermaid_command: Option<(usize, MermaidViewportCommand)>,
@@ -128,6 +129,7 @@ impl Default for NavigationState {
             viewport: None,
             reveal_target: None,
             document_scroll: 0.0,
+            scroll_remaining: 0.0,
             document_jump: None,
             source_block: None,
             mermaid_command: None,
@@ -176,6 +178,23 @@ impl NavigationState {
 
     pub fn take_document_scroll(&mut self) -> f32 {
         std::mem::take(&mut self.document_scroll)
+    }
+
+    /// Returns the scroll delta to apply this frame, advancing the smooth-scroll
+    /// animation toward the accumulated target using exponential easing.
+    pub fn advance_scroll(&mut self, dt: f32) -> f32 {
+        if self.scroll_remaining.abs() < 0.5 {
+            self.scroll_remaining = 0.0;
+            return 0.0;
+        }
+        let factor = 1.0 - (-14.0_f32 * dt).exp();
+        let delta = self.scroll_remaining * factor;
+        self.scroll_remaining -= delta;
+        delta
+    }
+
+    pub fn has_scroll_remaining(&self) -> bool {
+        self.scroll_remaining.abs() >= 0.5
     }
 
     pub fn request_document_jump(&mut self, jump: DocumentJump) {
@@ -292,7 +311,7 @@ impl NavigationState {
 
         if self.mode == NavigationMode::Document {
             if let Some(direction) = direction {
-                self.document_scroll -= DOCUMENT_SCROLL_STEP * direction as f32;
+                self.scroll_remaining -= DOCUMENT_SCROLL_STEP * direction as f32;
             }
         }
     }

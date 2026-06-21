@@ -150,6 +150,8 @@ enum PaletteCommand {
     Toc,
     Search,
     ToggleTheme,
+    ToggleWrap,
+    MermaidExport,
     Quit,
 }
 
@@ -232,6 +234,16 @@ const PALETTE_ENTRIES: &[PaletteEntry] = &[
         command: PaletteCommand::ToggleTheme,
     },
     PaletteEntry {
+        name: "msave",
+        description: "export selected Mermaid diagram as SVG file",
+        command: PaletteCommand::MermaidExport,
+    },
+    PaletteEntry {
+        name: "wrap",
+        description: "toggle soft word wrap on/off",
+        command: PaletteCommand::ToggleWrap,
+    },
+    PaletteEntry {
         name: "q",
         description: "close the viewer window",
         command: PaletteCommand::Quit,
@@ -291,6 +303,7 @@ pub struct AppOptions {
     pub render_mermaid: bool,
     pub cursor_file: Option<std::path::PathBuf>,
     pub content_file: Option<std::path::PathBuf>,
+    pub stdin_content: Option<String>,
 }
 
 const MAX_CONCURRENT_MERMAID_JOBS: usize = 4;
@@ -314,7 +327,11 @@ impl NvmdApp {
             render::theme::configure(&ctx, &markdown_style);
 
             let reload_path = reload_path(&config, &options);
-            let watcher_result = FileWatcher::watch(reload_path);
+            let watcher_result = if options.stdin_content.is_some() {
+                Err(anyhow::anyhow!("stdin mode"))
+            } else {
+                FileWatcher::watch(reload_path)
+            };
             let watcher_error = watcher_result.as_ref().err().map(|err| err.to_string());
             let (mermaid_sender, mermaid_results) = mpsc::channel();
             let (image_sender, image_results) = mpsc::channel();
@@ -356,13 +373,15 @@ impl NvmdApp {
                 word_count: 0,
             };
 
-            if app.watcher.is_none() {
+            if app.watcher.is_none() && app.options.stdin_content.is_none() {
                 app.watcher_error = Some(format!(
                     "{}; live reload disabled",
                     app.watcher_error
                         .take()
                         .unwrap_or_else(|| "file watcher is unavailable".to_owned())
                 ));
+            } else if app.options.stdin_content.is_some() {
+                app.watcher_error = None;
             }
             app.reload();
             app
@@ -379,6 +398,7 @@ impl NvmdApp {
                 render_mermaid: false,
                 cursor_file: None,
                 content_file: None,
+                stdin_content: None,
             },
             document: None,
             error: Some(message),
@@ -419,7 +439,12 @@ impl NvmdApp {
         self.image_cache.clear();
         self.restore_scroll = true;
         self.heading_cursor = 0;
-        match loader::load_markdown(reload_path(&self.config, &self.options)) {
+        let source_result = if let Some(content) = &self.options.stdin_content {
+            Ok(content.clone())
+        } else {
+            loader::load_markdown(reload_path(&self.config, &self.options))
+        };
+        match source_result {
             Ok(source) => {
                 let mut document = parser::parse_markdown(&source);
                 document.source_path = Some(self.config.markdown_path.clone());
@@ -677,6 +702,11 @@ impl NvmdApp {
                 }
 
                 let document_scroll = self.navigation.take_document_scroll();
+                let dt = ctx.input(|i| i.unstable_dt).clamp(0.001, 0.1);
+                let smooth_delta = self.navigation.advance_scroll(dt);
+                if self.navigation.has_scroll_remaining() {
+                    ctx.request_repaint();
+                }
                 let document_jump = self.navigation.take_document_jump();
                 self.navigation.begin_target_collection();
                 let mut scroll_area = egui::ScrollArea::vertical()
@@ -688,6 +718,9 @@ impl NvmdApp {
                 let scroll_output = scroll_area.show(ui, |ui| {
                         if document_scroll != 0.0 {
                             ui.scroll_with_delta(egui::vec2(0.0, document_scroll));
+                        }
+                        if smooth_delta != 0.0 {
+                            ui.scroll_with_delta(egui::vec2(0.0, smooth_delta));
                         }
                         if document_jump == Some(DocumentJump::Top) {
                             ui.scroll_to_cursor(Some(egui::Align::TOP));
@@ -734,6 +767,7 @@ impl NvmdApp {
                                                     search_match,
                                                     &mut visible_heading_block,
                                                     &self.toc_entries,
+                                                    self.settings.word_wrap,
                                                 );
                                                 self.active_toc_index = visible_heading_block
                                                     .and_then(|bi| self.toc_entries.iter().position(|e| e.block_index == bi));
@@ -1023,6 +1057,40 @@ impl NvmdApp {
                 };
                 render::theme::configure(ctx, &self.settings.style());
                 Ok(())
+            }
+            PaletteCommand::ToggleWrap => {
+                self.settings.word_wrap = !self.settings.word_wrap;
+                let _ = self.settings.save();
+                Ok(())
+            }
+            PaletteCommand::MermaidExport => {
+                let index = match self.navigation.mode {
+                    crate::input::NavigationMode::MermaidControl { index } => index,
+                    _ => return self.palette.status = Some("select a Mermaid diagram first (Space/j/k)".to_owned()),
+                };
+                let sources = self
+                    .document
+                    .as_ref()
+                    .map(|d| all_mermaid_sources(&d.blocks))
+                    .unwrap_or_default();
+                let Some(source) = sources.get(index) else {
+                    return self.palette.status = Some("no Mermaid diagram at that index".to_owned());
+                };
+                let Some(svg) = self.mermaid.read_svg(source) else {
+                    return self.palette.status = Some("diagram not yet rendered — try again in a moment".to_owned());
+                };
+                let key = crate::mermaid::cache::MermaidCache::key(source);
+                let filename = format!("diagram-{}.svg", &key[..8]);
+                let out_path = std::env::current_dir().unwrap_or_default().join(&filename);
+                match std::fs::write(&out_path, svg.as_bytes()) {
+                    Ok(()) => {
+                        self.palette.status = Some(format!("saved {filename}"));
+                    }
+                    Err(e) => {
+                        self.palette.status = Some(format!("failed to write file: {e}"));
+                    }
+                }
+                return;
             }
             PaletteCommand::Quit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1624,6 +1692,24 @@ fn pending_mermaid_sources(blocks: &[Block]) -> Vec<String> {
                     for blocks in &item.definitions {
                         sources.extend(pending_mermaid_sources(blocks));
                     }
+                }
+            }
+            _ => {}
+        }
+    }
+    sources
+}
+
+fn all_mermaid_sources(blocks: &[Block]) -> Vec<String> {
+    let mut sources = Vec::new();
+    for block in blocks {
+        match block {
+            Block::Mermaid { source, .. } => sources.push(source.clone()),
+            Block::Quote { blocks } => sources.extend(all_mermaid_sources(blocks)),
+            Block::FootnoteDefinition { blocks, .. } => sources.extend(all_mermaid_sources(blocks)),
+            Block::List { items, .. } => {
+                for item in items {
+                    sources.extend(all_mermaid_sources(&item.blocks));
                 }
             }
             _ => {}
