@@ -1,12 +1,14 @@
-use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::document::model::{plain_text, Block, Document, Inline, ListItem, TableAlignment};
 use crate::mermaid::renderer::MermaidRenderState;
 
 pub fn parse_markdown(source: &str) -> Document {
     let mut builder = Builder::default();
-    let options =
-        Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TABLES | Options::ENABLE_TASKLISTS;
+    let options = Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_FOOTNOTES;
     let parser = Parser::new_ext(source, options);
     for event in parser {
         builder.handle(event);
@@ -33,6 +35,7 @@ struct Builder {
     table_rows: Vec<Vec<Vec<Inline>>>,
     table_row: Vec<Vec<Inline>>,
     table_in_header: bool,
+    footnote_stack: Vec<(String, Vec<Block>)>,
 }
 
 #[derive(Debug, Default)]
@@ -127,6 +130,9 @@ impl Builder {
                 self.mode = Mode::Item;
                 self.current_item_checked = None;
                 self.clear_inline_state();
+            }
+            Tag::FootnoteDefinition(label) => {
+                self.footnote_stack.push((label.into_string(), Vec::new()));
             }
             Tag::BlockQuote => {
                 self.quote_stack.push(Vec::new());
@@ -226,6 +232,11 @@ impl Builder {
                 });
                 self.mode = Mode::None;
             }
+            TagEnd::FootnoteDefinition => {
+                if let Some((label, blocks)) = self.footnote_stack.pop() {
+                    self.blocks.push(Block::FootnoteDefinition { label, blocks });
+                }
+            }
             TagEnd::BlockQuote => {
                 if let Some(blocks) = self.quote_stack.pop() {
                     self.push_block(Block::Quote { blocks });
@@ -304,7 +315,9 @@ impl Builder {
     }
 
     fn push_block(&mut self, block: Block) {
-        if let Some(quote_blocks) = self.quote_stack.last_mut() {
+        if let Some((_, fn_blocks)) = self.footnote_stack.last_mut() {
+            fn_blocks.push(block);
+        } else if let Some(quote_blocks) = self.quote_stack.last_mut() {
             quote_blocks.push(block);
         } else {
             self.blocks.push(block);
