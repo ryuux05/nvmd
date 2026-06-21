@@ -26,8 +26,8 @@ use std::os::unix::process::CommandExt;
     about = "Lightweight native Markdown preview for Neovim."
 )]
 struct Cli {
-    /// Markdown file to preview.
-    path: PathBuf,
+    /// Markdown file to preview, or - to read from stdin.
+    path: Option<PathBuf>,
 
     /// Disable Mermaid rendering and show Mermaid source blocks instead.
     #[arg(long)]
@@ -58,7 +58,21 @@ fn main() -> Result<()> {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let config = config::Config::new(cli.path)?;
+    let is_stdin = cli.path.as_deref().map(|p| p == std::path::Path::new("-")).unwrap_or(true);
+    let stdin_content = if is_stdin {
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+            .context("failed to read markdown from stdin")?;
+        Some(buf)
+    } else {
+        None
+    };
+    let path = if is_stdin {
+        std::env::current_dir().unwrap_or_default().join("stdin.md")
+    } else {
+        cli.path.unwrap()
+    };
+    let config = config::Config::new(path)?;
     let viewer_settings = render::settings::ViewerSettings::load();
     let window_size = [
         viewer_settings.window_width.clamp(400.0, 3840.0),
@@ -73,8 +87,13 @@ fn run(cli: Cli) -> Result<()> {
         render_mermaid,
         cursor_file: cli.cursor_file,
         content_file: cli.content_file,
+        stdin_content,
     };
-    let title = format!("nvmd - {}", config.file_name());
+    let title = if is_stdin {
+        "nvmd - stdin".to_owned()
+    } else {
+        format!("nvmd - {}", config.file_name())
+    };
 
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
@@ -98,9 +117,14 @@ fn run(cli: Cli) -> Result<()> {
 }
 
 fn detach(cli: Cli) -> Result<()> {
+    // Stdin mode can't be detached — the parent process holds stdin.
+    let is_stdin = cli.path.as_deref().map(|p| p == std::path::Path::new("-")).unwrap_or(true);
+    if is_stdin {
+        return run(cli);
+    }
     let exe = std::env::current_exe().context("failed to resolve nvmd executable")?;
     let mut command = Command::new(exe);
-    command.arg("--window-process").arg(cli.path);
+    command.arg("--window-process").arg(cli.path.as_deref().unwrap());
 
     if let Some(cursor_file) = cli.cursor_file {
         command.arg("--cursor-file").arg(cursor_file);
