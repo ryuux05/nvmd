@@ -43,6 +43,10 @@ impl MermaidRenderer {
         }
     }
 
+    pub fn read_svg(&self, source: &str) -> Option<String> {
+        self.cache.read_svg(source)
+    }
+
     pub fn render_image(&self, source: &str) -> Result<ColorImage> {
         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             let svg = if let Some(svg) = self.cache.read_svg(source) {
