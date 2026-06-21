@@ -270,7 +270,7 @@ impl MarkdownStyle {
             list_item_min_height: 24.0,
             code_margin: 16,
             quote_margin: 12,
-            table_spacing: eframe::egui::vec2(18.0, 10.0),
+            table_spacing: eframe::egui::vec2(36.0, 12.0),
         }
     }
 
@@ -326,7 +326,7 @@ impl MarkdownStyle {
             list_item_min_height: 24.0,
             code_margin: 16,
             quote_margin: 12,
-            table_spacing: eframe::egui::vec2(18.0, 10.0),
+            table_spacing: eframe::egui::vec2(36.0, 12.0),
         }
     }
 }
