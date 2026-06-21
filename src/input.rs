@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 const LEADER_TIMEOUT: Duration = Duration::from_millis(750);
-const DOCUMENT_SCROLL_STEP: f32 = 140.0;
+const SCROLL_SPEED: f32 = 700.0; // pixels per second while key is held
 const MAX_EXPANDED_SIZE_STEP: u8 = 3;
 
 /// Parsed keybindings derived from `KeyConfig` strings.
@@ -297,7 +297,8 @@ impl NavigationState {
         }
 
         let leader_pressed = ctx.input(|input| input.key_pressed(egui::Key::Space));
-        let direction = if ctx.input(|input| input.key_pressed(keys.scroll_down)) {
+        // key_pressed for leader chording; key_down for continuous scroll
+        let direction_pressed = if ctx.input(|input| input.key_pressed(keys.scroll_down)) {
             Some(1_i32)
         } else if ctx.input(|input| input.key_pressed(keys.scroll_up)) {
             Some(-1_i32)
@@ -305,14 +306,16 @@ impl NavigationState {
             None
         };
 
-        if self.apply_leader_keys(leader_pressed, direction) {
+        if self.apply_leader_keys(leader_pressed, direction_pressed) {
             return;
         }
 
         if self.mode == NavigationMode::Document {
-            if let Some(direction) = direction {
-                self.scroll_remaining -= DOCUMENT_SCROLL_STEP * direction as f32;
-            }
+            let dt = ctx.input(|i| i.unstable_dt).clamp(0.001, 0.1);
+            let down = ctx.input(|i| i.key_down(keys.scroll_down));
+            let up = ctx.input(|i| i.key_down(keys.scroll_up));
+            if down { self.scroll_remaining -= SCROLL_SPEED * dt; }
+            if up   { self.scroll_remaining += SCROLL_SPEED * dt; }
         }
     }
 
