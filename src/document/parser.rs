@@ -87,7 +87,6 @@ impl Builder {
             Event::FootnoteReference(label) => {
                 self.push_inline(Inline::FootnoteRef(label.into_string()));
             }
-            _ => {}
         }
     }
 
