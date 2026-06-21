@@ -25,6 +25,7 @@ pub struct ViewerSettings {
     pub table_spacing_y: f32,
     pub heading_sizes: [f32; 6],
     pub keys: KeyConfig,
+    pub word_wrap: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -140,6 +141,7 @@ impl Default for ViewerSettings {
             table_spacing_y: style.table_spacing.y,
             heading_sizes: style.heading_sizes,
             keys: KeyConfig::default(),
+            word_wrap: true,
         }
     }
 }

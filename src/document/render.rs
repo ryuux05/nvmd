@@ -80,6 +80,7 @@ pub fn render_document(
     search_match: Option<usize>,
     visible_heading_block: &mut Option<usize>,
     toc_entries: &[TocEntry],
+    word_wrap: bool,
 ) {
     if let Some(fm) = &document.frontmatter {
         render_frontmatter(ui, fm, style);
@@ -116,6 +117,7 @@ pub fn render_document(
             image_cache,
             is_search_match,
             toc_entries,
+            word_wrap,
         );
     }
 }
@@ -132,6 +134,7 @@ fn render_block(
     image_cache: &mut std::collections::HashMap<String, crate::app::ImageEntry>,
     is_search_match: bool,
     toc_entries: &[TocEntry],
+    word_wrap: bool,
 ) {
     if is_search_match {
         let rect = ui.available_rect_before_wrap();
@@ -170,6 +173,7 @@ fn render_block(
                 style,
             toc_entries,
             navigation,
+                word_wrap,
             );
             if *level <= 2 {
                 ui.add_space(6.0);
@@ -178,7 +182,7 @@ fn render_block(
         }
         Block::Paragraph { content } => {
             if content.iter().any(|i| matches!(i, Inline::Image { .. })) {
-                render_paragraph_with_images(ui, content, style, image_cache, toc_entries, navigation);
+                render_paragraph_with_images(ui, content, style, image_cache, toc_entries, navigation, word_wrap);
             } else {
                 inline_label(
                     ui,
@@ -189,6 +193,7 @@ fn render_block(
                     style,
                 toc_entries,
                 navigation,
+                word_wrap,
                 );
             }
         }
@@ -244,6 +249,7 @@ fn render_block(
                                 image_cache,
                                 false,
                                 toc_entries,
+                                word_wrap,
                             );
 
                         }
@@ -270,7 +276,7 @@ fn render_block(
                         ui.add_space(4.0);
                         ui.visuals_mut().override_text_color = Some(text_color);
                         for block in blocks.iter().skip(1) {
-                            render_block(ui, &mut block.clone(), render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries);
+                            render_block(ui, &mut block.clone(), render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries, word_wrap);
                             ui.add_space(style.paragraph_gap * 0.5);
                         }
                     });
@@ -288,7 +294,7 @@ fn render_block(
                     .show(ui, |ui| {
                         ui.visuals_mut().override_text_color = Some(style.colors.quote_text);
                         for block in blocks {
-                            render_block(ui, block, render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries);
+                            render_block(ui, block, render_mermaid, style, mermaid_index, mermaid_count, navigation, highlighter, image_cache, false, toc_entries, word_wrap);
                             ui.add_space(style.paragraph_gap * 0.5);
                         }
                     });
@@ -336,6 +342,7 @@ fn render_block(
                         image_cache,
                         false,
                         toc_entries,
+                        word_wrap,
                     );
 
                 }
@@ -352,6 +359,7 @@ fn render_block(
                     style,
                 toc_entries,
                 navigation,
+                word_wrap,
                 );
                 for blocks in &item.definitions {
                     ui.indent("definition-list-item", |ui| {
@@ -369,6 +377,7 @@ fn render_block(
                                 image_cache,
                                 false,
                                 toc_entries,
+                                word_wrap,
                             );
 
                         }
@@ -472,9 +481,10 @@ fn inline_label(
     markdown: &MarkdownStyle,
     toc_entries: &[TocEntry],
     navigation: &mut NavigationState,
+    word_wrap: bool,
 ) {
     let line_height = font_id.size * markdown.line_height;
-    let layout = inline_layout(
+    let mut layout = inline_layout(
         inlines,
         font_id,
         color,
@@ -483,6 +493,9 @@ fn inline_label(
         line_height,
         markdown,
     );
+    if !word_wrap {
+        layout.job.wrap.max_width = f32::INFINITY;
+    }
     let has_links = !layout.link_sections.is_empty();
     let sense = if has_links {
         egui::Sense::click()
@@ -1050,6 +1063,7 @@ fn render_paragraph_with_images(
     image_cache: &mut std::collections::HashMap<String, ImageEntry>,
     toc_entries: &[TocEntry],
     navigation: &mut NavigationState,
+    word_wrap: bool,
 ) {
     for inline in content {
         match inline {
@@ -1120,6 +1134,7 @@ fn render_paragraph_with_images(
                     style,
                 toc_entries,
                 navigation,
+                word_wrap,
                 );
             }
         }
