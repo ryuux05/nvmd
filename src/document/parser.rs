@@ -1,4 +1,4 @@
-use pulldown_cmark::{Alignment, CodeBlockKind, CowStr, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::document::model::{plain_text, Block, Document, Inline, ListItem, TableAlignment};
 use crate::mermaid::renderer::MermaidRenderState;

@@ -3,7 +3,7 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 
 const LEADER_TIMEOUT: Duration = Duration::from_millis(750);
-const DOCUMENT_SCROLL_STEP: f32 = 52.0;
+const DOCUMENT_SCROLL_STEP: f32 = 140.0;
 const MAX_EXPANDED_SIZE_STEP: u8 = 3;
 
 /// Parsed keybindings derived from `KeyConfig` strings.
