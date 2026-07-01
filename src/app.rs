@@ -709,78 +709,80 @@ impl NvmdApp {
                 }
                 let document_jump = self.navigation.take_document_jump();
                 self.navigation.begin_target_collection();
-                let mut scroll_area = egui::ScrollArea::vertical()
-                    .auto_shrink([false, false]);
+                let mut scroll_area = egui::ScrollArea::vertical().auto_shrink([false, false]);
                 if self.restore_scroll && !self.navigation.has_pending_source_block() {
                     scroll_area = scroll_area.vertical_scroll_offset(self.remembered_scroll);
                     self.restore_scroll = false;
+                } else {
+                    let keyboard_scroll = document_scroll + smooth_delta;
+                    if keyboard_scroll != 0.0 {
+                        scroll_area = scroll_area.vertical_scroll_offset(
+                            (self.remembered_scroll - keyboard_scroll).max(0.0),
+                        );
+                    }
                 }
                 let scroll_output = scroll_area.show(ui, |ui| {
-                        if document_scroll != 0.0 {
-                            ui.scroll_with_delta(egui::vec2(0.0, document_scroll));
-                        }
-                        if smooth_delta != 0.0 {
-                            ui.scroll_with_delta(egui::vec2(0.0, smooth_delta));
-                        }
-                        if document_jump == Some(DocumentJump::Top) {
-                            ui.scroll_to_cursor(Some(egui::Align::TOP));
-                        }
-                        let available_width = ui.available_width();
-                        let side_margin = responsive_side_margin(available_width);
-                        let page_width =
-                            responsive_page_width(available_width, side_margin, &markdown_style);
-                        let inner_margin =
-                            responsive_inner_margin(available_width, &markdown_style);
-                        let top_margin = if available_width < 560.0 { 8.0 } else { 18.0 };
+                    if document_jump == Some(DocumentJump::Top) {
+                        ui.scroll_to_cursor(Some(egui::Align::TOP));
+                    }
+                    let available_width = ui.available_width();
+                    let side_margin = responsive_side_margin(available_width);
+                    let page_width =
+                        responsive_page_width(available_width, side_margin, &markdown_style);
+                    let inner_margin = responsive_inner_margin(available_width, &markdown_style);
+                    let top_margin = if available_width < 560.0 { 8.0 } else { 18.0 };
 
-                        ui.add_space(top_margin);
-                        ui.vertical_centered(|ui| {
-                            ui.set_width(page_width);
-                            egui::Frame::new()
-                                .fill(markdown_style.colors.page_background)
-                                .stroke(egui::Stroke::new(1.0, markdown_style.colors.page_border))
-                                .inner_margin(egui::Margin::same(inner_margin))
-                                .show(ui, |ui| {
-                                    ui.with_layout(
-                                        egui::Layout::top_down(egui::Align::LEFT),
-                                        |ui| {
-                                            ui.set_width(
-                                                (page_width - f32::from(inner_margin) * 2.0)
-                                                    .max(1.0),
+                    ui.add_space(top_margin);
+                    ui.vertical_centered(|ui| {
+                        ui.set_width(page_width);
+                        egui::Frame::new()
+                            .fill(markdown_style.colors.page_background)
+                            .stroke(egui::Stroke::new(1.0, markdown_style.colors.page_border))
+                            .inner_margin(egui::Margin::same(inner_margin))
+                            .show(ui, |ui| {
+                                ui.with_layout(
+                                    egui::Layout::top_down(egui::Align::LEFT),
+                                    |ui| {
+                                        ui.set_width(
+                                            (page_width - f32::from(inner_margin) * 2.0).max(1.0),
+                                        );
+                                        if let Some(error) = &self.error {
+                                            ui.colored_label(
+                                                egui::Color32::from_rgb(255, 100, 100),
+                                                error,
                                             );
-                                            if let Some(error) = &self.error {
-                                                ui.colored_label(
-                                                    egui::Color32::from_rgb(255, 100, 100),
-                                                    error,
-                                                );
-                                            } else if let Some(document) = &mut self.document {
-                                                let search_match = self.search.current_match();
-                                                let mut visible_heading_block: Option<usize> = None;
-                                                crate::document::render::render_document(
-                                                    ui,
-                                                    document,
-                                                    self.options.render_mermaid,
-                                                    &markdown_style,
-                                                    &mut self.navigation,
-                                                    self.highlighter.as_ref(),
-                                                    &mut self.image_cache,
-                                                    search_match,
-                                                    &mut visible_heading_block,
-                                                    &self.toc_entries,
-                                                    self.settings.word_wrap,
-                                                );
-                                                self.active_toc_index = visible_heading_block
-                                                    .and_then(|bi| self.toc_entries.iter().position(|e| e.block_index == bi));
-                                            }
-                                        },
-                                    );
-                                });
-                        });
-                        ui.add_space(if available_width < 560.0 { 12.0 } else { 28.0 });
-                        if document_jump == Some(DocumentJump::Bottom) {
-                            ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
-                        }
+                                        } else if let Some(document) = &mut self.document {
+                                            let search_match = self.search.current_match();
+                                            let mut visible_heading_block: Option<usize> = None;
+                                            crate::document::render::render_document(
+                                                ui,
+                                                document,
+                                                self.options.render_mermaid,
+                                                &markdown_style,
+                                                &mut self.navigation,
+                                                self.highlighter.as_ref(),
+                                                &mut self.image_cache,
+                                                search_match,
+                                                &mut visible_heading_block,
+                                                &self.toc_entries,
+                                                self.settings.word_wrap,
+                                            );
+                                            self.active_toc_index =
+                                                visible_heading_block.and_then(|bi| {
+                                                    self.toc_entries
+                                                        .iter()
+                                                        .position(|e| e.block_index == bi)
+                                                });
+                                        }
+                                    },
+                                );
+                            });
                     });
+                    ui.add_space(if available_width < 560.0 { 12.0 } else { 28.0 });
+                    if document_jump == Some(DocumentJump::Bottom) {
+                        ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
+                    }
+                });
                 self.navigation.set_viewport(scroll_output.inner_rect);
                 self.remembered_scroll = scroll_output.state.offset.y;
 
@@ -1542,70 +1544,128 @@ impl NvmdApp {
         let mut go_next = false;
         let mut go_prev = false;
 
-        egui::TopBottomPanel::bottom("search-bar")
-            .frame(
+        let input_width = (ctx.available_rect().width() - 320.0).clamp(220.0, 320.0);
+        let button_fill = if markdown_style.is_dark {
+            egui::Color32::from_rgb(18, 26, 44)
+        } else {
+            markdown_style.colors.page_background
+        };
+        let active_button_fill = if markdown_style.is_dark {
+            egui::Color32::from_rgb(28, 42, 70)
+        } else {
+            egui::Color32::from_rgb(222, 235, 255)
+        };
+
+        egui::Area::new(egui::Id::new("search-bar"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-24.0, 58.0))
+            .show(ctx, |ui| {
                 egui::Frame::new()
                     .fill(markdown_style.colors.chrome_background)
                     .stroke(egui::Stroke::new(1.0, markdown_style.colors.chrome_border))
-                    .inner_margin(egui::Margin::symmetric(14, 8)),
-            )
-            .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("/")
-                            .font(egui::FontId::monospace(14.0))
-                            .color(markdown_style.colors.link),
-                    );
-                    let before = self.search.query.clone();
-                    let response = ui.add_sized(
-                        [200.0, 24.0],
-                        egui::TextEdit::singleline(&mut self.search.query)
-                            .id(egui::Id::new("search-input"))
-                            .hint_text("search…"),
-                    );
-                    if self.search.request_focus {
-                        response.request_focus();
-                        self.search.request_focus = false;
-                    }
-                    if before != self.search.query {
-                        query_changed = true;
-                    }
-                    if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                        go_next = true;
-                    }
-                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                        close = true;
-                    }
-                    if !self.search.matches.is_empty() {
-                        let count_text = format!(
-                            "{}/{}",
-                            self.search.selected + 1,
-                            self.search.matches.len()
-                        );
-                        ui.label(
-                            egui::RichText::new(count_text)
-                                .size(12.0)
-                                .color(markdown_style.colors.muted_text),
-                        );
-                    } else if !self.search.query.is_empty() {
-                        ui.label(
-                            egui::RichText::new("no matches")
-                                .size(12.0)
-                                .color(markdown_style.colors.warning_text),
-                        );
-                    }
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.small_button("✕").clicked() {
-                            close = true;
-                        }
-                        if ui.small_button("↓").on_hover_text("Next (n)").clicked() {
-                            go_next = true;
-                        }
-                        if ui.small_button("↑").on_hover_text("Prev (N)").clicked() {
-                            go_prev = true;
-                        }
+                    .corner_radius(16.0)
+                    .inner_margin(egui::Margin::symmetric(9, 7))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(7.0, 0.0);
+                        ui.horizontal(|ui| {
+                            {
+                                let (rect, _) = ui.allocate_exact_size(egui::vec2(26.0, 30.0), egui::Sense::hover());
+                                ui.painter().rect_filled(rect, 10.0, egui::Color32::from_rgb(18, 26, 44));
+                                ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, egui::Color32::from_rgb(36, 52, 88)), egui::StrokeKind::Outside);
+                                ui.painter().text(rect.center() + egui::vec2(0.0, 3.5), egui::Align2::CENTER_CENTER, "/", egui::FontId::proportional(11.0), egui::Color32::from_rgb(194, 208, 232));
+                            }
+                            let before = self.search.query.clone();
+                            let (frame_rect, _) = ui.allocate_exact_size(egui::vec2(input_width + 20.0, 30.0), egui::Sense::hover());
+                            ui.painter().rect_filled(frame_rect, 10.0, markdown_style.colors.code_background);
+                            ui.painter().rect_stroke(frame_rect, 10.0, egui::Stroke::new(1.0, markdown_style.colors.page_border), egui::StrokeKind::Outside);
+                            let text_rect = frame_rect.shrink2(egui::vec2(10.0, 6.0));
+                            let response = ui.put(
+                                text_rect,
+                                egui::TextEdit::singleline(&mut self.search.query)
+                                    .id(egui::Id::new("search-input"))
+                                    .hint_text("search...")
+                                    .desired_width(f32::INFINITY)
+                                    .frame(false),
+                            );
+                            if self.search.request_focus {
+                                response.request_focus();
+                                self.search.request_focus = false;
+                            }
+                            if before != self.search.query {
+                                query_changed = true;
+                            }
+                            if ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.shift) {
+                                go_prev = true;
+                            } else if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                go_next = true;
+                            }
+                            if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                close = true;
+                            }
+                            if !self.search.matches.is_empty() {
+                                let count_text = format!(
+                                    "{}/{}",
+                                    self.search.selected + 1,
+                                    self.search.matches.len()
+                                );
+                                egui::Frame::new()
+                                    .fill(button_fill)
+                                    .stroke(egui::Stroke::new(
+                                        1.0,
+                                        markdown_style.colors.chrome_border,
+                                    ))
+                                    .corner_radius(12.0)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new(count_text)
+                                                .size(12.0)
+                                                .color(markdown_style.colors.text),
+                                        );
+                                    });
+                            } else if !self.search.query.is_empty() {
+                                egui::Frame::new()
+                                    .fill(markdown_style.colors.warning_background)
+                                    .stroke(egui::Stroke::new(
+                                        1.0,
+                                        markdown_style.colors.warning_border,
+                                    ))
+                                    .corner_radius(12.0)
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.label(
+                                            egui::RichText::new("no matches")
+                                                .size(12.0)
+                                                .color(markdown_style.colors.warning_text),
+                                        );
+                                    });
+                            }
+                            {
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(32.0, 30.0), egui::Sense::click());
+                                let fill = if resp.hovered() { active_button_fill } else { button_fill };
+                                ui.painter().rect_filled(rect, 10.0, fill);
+                                ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, markdown_style.colors.chrome_border), egui::StrokeKind::Outside);
+                                ui.painter().text(rect.center() + egui::vec2(0.0, 3.5), egui::Align2::CENTER_CENTER, "↑", egui::FontId::proportional(13.0), markdown_style.colors.text);
+                                if resp.on_hover_text("Previous match (Shift+Enter)").clicked() { go_prev = true; }
+                            }
+                            {
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(32.0, 30.0), egui::Sense::click());
+                                let fill = if resp.hovered() { button_fill } else { active_button_fill };
+                                ui.painter().rect_filled(rect, 10.0, fill);
+                                ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, markdown_style.colors.chrome_border), egui::StrokeKind::Outside);
+                                ui.painter().text(rect.center() + egui::vec2(0.0, 3.5), egui::Align2::CENTER_CENTER, "↓", egui::FontId::proportional(13.0), markdown_style.colors.text);
+                                if resp.on_hover_text("Next match (Enter)").clicked() { go_next = true; }
+                            }
+                            {
+                                let (rect, resp) = ui.allocate_exact_size(egui::vec2(32.0, 30.0), egui::Sense::click());
+                                let fill = if resp.hovered() { active_button_fill } else { button_fill };
+                                ui.painter().rect_filled(rect, 10.0, fill);
+                                ui.painter().rect_stroke(rect, 10.0, egui::Stroke::new(1.0, markdown_style.colors.chrome_border), egui::StrokeKind::Outside);
+                                ui.painter().text(rect.center() + egui::vec2(0.0, 3.5), egui::Align2::CENTER_CENTER, "×", egui::FontId::proportional(15.0), markdown_style.colors.text);
+                                if resp.on_hover_text("Close search (Esc)").clicked() { close = true; }
+                            }
+                        });
                     });
-                });
             });
 
         if close {
@@ -1918,6 +1978,7 @@ mod tests {
             render_mermaid: true,
             cursor_file: None,
             content_file: Some(snapshot.clone()),
+            stdin_content: None,
         };
 
         assert_eq!(reload_path(&config, &options), snapshot.as_path());
@@ -1926,6 +1987,7 @@ mod tests {
             render_mermaid: true,
             cursor_file: None,
             content_file: None,
+            stdin_content: None,
         };
         assert_eq!(reload_path(&config, &saved_only), config.markdown_path);
     }
